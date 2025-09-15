@@ -1,0 +1,13 @@
+name: plsr-metamodel
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - scikit-learn
+  - openpyxl
+  - matplotlib
+  - pytest
+  - black
+  - ruff

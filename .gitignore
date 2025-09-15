@@ -1,0 +1,28 @@
+#Created by chatGPT. for now
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+.ipynb_checkpoints/
+dist/
+build/
+
+# Data & notebooks cache
+notebooks/.ipynb_checkpoints/
+data/processed/
+data/interim/
+
+# OS
+.DS_Store
+
+# Tools
+.mypy_cache/
+.pytest_cache/
+
+# Editors
+.vscode/
+.idea/
