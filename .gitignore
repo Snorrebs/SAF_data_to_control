@@ -27,7 +27,7 @@ data/interim/
 .vscode/
 .idea/
 
-.csv
-.json
-.xlsx
-.log
+*.csv
+*.json
+*.xlsx
+*.log
