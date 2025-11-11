@@ -26,3 +26,8 @@ data/interim/
 # Editors
 .vscode/
 .idea/
+
+.csv
+.json
+.xlsx
+.log
