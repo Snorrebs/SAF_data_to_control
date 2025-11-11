@@ -1,0 +1,43 @@
+# I/O
+paths:
+raw_csv: data/raw/07_08_1s.csv
+interim_csv: data/interim/Filtered_o5_01.csv
+processed_parquet: data/processed/arx_dataset.parquet
+figs_dir: reports/figs
+models_dir: models
+
+# Signals (rename to your columns)
+columns:
+# mandatory
+timestamp: timestamp
+# outputs
+y: [Tot_Resistance_mOhm]
+# exogenous inputs used by ARX (filtered + z-scored)
+X: [El1_kA, El2_kA, El3_kA, El1_pos_m, El2_pos_m, El3_pos_m]
+# optional already-filtered columns found in your CSV
+provided_filtered: [Tot_Resistance_mOhm_filt]
+
+# Filtering
+filter:
+enabled: true
+order: 5
+cutoff_Hz: 0.05 # 1/20 s^-1 ≈ 0.05 Hz for 1 s sampling (Butterworth)
+
+# Normalization
+normalize:
+enabled: true
+with_mean: true
+with_std: true
+
+# ARX
+arx:
+lags: 10 # number of past steps for each regressor
+ridge: 1e-4 # λ to avoid singular XtX
+horizons: [1,5,10,15,20,25,30]
+stride: 5
+
+# Torch ARX (optional)
+torch_arx:
+lags: 10
+ridge: 1e-4
+device: cpu
