@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-# prep_for_arx.py
-# Builds AR and exogenous lag features for ARX.
-# IMPORTANT: No scaling here. Do z-scoring inside the trainer on TRAIN ONLY.
-
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -11,9 +6,9 @@ import joblib
 # --------------------------- CONFIG ---------------------------
 IN_CSV         = Path("data/1s_data_from_plant/0702_0703_1s_filtered.csv")
 OUT_CSV        = Path("arx/arx_prep/model_arx_30_5_5.csv")
-SCALERS_PATH   = Path("arx/arx_prep/model_arx_scalers_30_5_5.joblib")  # will write META next to this
+SCALERS_PATH   = Path("arx/arx_prep/model_arx_scalers_30_5_5.joblib")  # will write META next to this ...
 
-# Target (filtered plant) — no scaling here
+# Target (filtered plant)
 Y_FILT_COL     = "Tot_Resistance_mOhm_filt"
 
 # Base exogenous signals (prefer *_filt if present)
@@ -36,7 +31,6 @@ SAVE_INDEX_TIMESTAMP    = True
 H = 13                # forecast horizon in seconds; 0 = predict y(t)
 INCLUDE_U_T = False      # True = nowcast (use current inputs u(t)), False = strictly causal
 
-# --------------------------------------------------------------
 
 def ensure_parent(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +123,6 @@ def main():
             "max_x_lag": MAX_X_LAG,
             "included_base_inputs": chosen_inputs,
             "include_u_t": INCLUDE_U_T,
-            "note": "No filtering or scaling here; scale inside trainer on train-only. Use target_time to trim boundary leakage.",
         },
     }
     meta_path = SCALERS_PATH.with_suffix(".meta.joblib")

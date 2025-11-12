@@ -1,7 +1,6 @@
-# constants_metamodel.py
 from typing import Tuple
 
-# Defaults (can be overridden if you later estimate these online)
+# Defaults for metamodel inputs
 CW_thk: Tuple[float, float, float] = (0.25, 0.25, 0.25)
 rCW:    Tuple[float, float, float] = (2.3,  2.3,  2.3 )
 rSiC:   Tuple[float, float, float] = (30.0, 30.0, 30.0)

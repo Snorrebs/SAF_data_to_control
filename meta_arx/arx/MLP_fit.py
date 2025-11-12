@@ -1,15 +1,3 @@
-#!/usr/bin/env python3
-# torch_run_arx.py
-#
-# Train a SINGLE-model ARX that predicts the PLANT (filtered) directly.
-# - Uses only z-scored features (columns ending with "_z", except the target_z).
-# - Target name is read from prep metadata, so it works for both H=0 and H>0.
-# - Time-based split with an optional GAP to avoid leakage from overlapping windows.
-# - Saves model and a small report CSV of predictions vs truth.
-#
-# Requirements:
-#   pip install torch pandas numpy joblib scikit-learn
-
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -23,12 +11,11 @@ SCALERS_PATH  = Path("arx/arx_prep/model_arx_scalers_30_5_5.joblib")
 MODEL_OUT     = Path("arx/models/arx_one_model.pt")
 PRED_CSV_OUT  = Path("arx/models/arx_one_model_predictions.csv")
 
-# NOTE: physical target name is not hardcoded; we read it from metadata.
 EPOCHS        = 60
 LR            = 1e-3
 WEIGHT_DECAY  = 1e-4
 TRAIN_FRAC    = 0.80
-BATCH_SIZE    = 4096     # tune as needed; set None to use full-batch
+BATCH_SIZE    = 4096     
 HIDDEN        = 64       # width of hidden layers
 LAYERS        = 2        # number of hidden layers
 SEED          = 7
@@ -79,17 +66,17 @@ def main():
     meta = load(SCALERS_PATH)
 
     # Target names from prep metadata (handles H=0 or H>0)
-    y_col   = meta["y_col"]             # e.g., "Tot_Resistance_mOhm_filt" or "y_target"
+    y_col   = meta["y_col"]             
     y_col_z = y_col + "_z"
     y_scaler = meta["y_scaler"]
 
     # Use ONLY z-scored features, excluding the target_z
     X_cols_z = [c for c in df.columns if c.endswith("_z") and c != y_col_z]
 
-    # ---- FIX: Drop NaNs only on existing z-features and target_z (no physical target here) ----
+    # Should be clean already
     df = df.dropna(subset=X_cols_z + [y_col_z]).copy()
 
-    # ---------- Time-based split with optional GAP to avoid leakage ----------
+    # ---------- Time-based split with GAP to avoid leakage ----------
     cfg = meta.get("config", {})
     H = int(cfg.get("horizon", 0))
     gap = int(H + max(cfg.get("max_ar_lag", 0), cfg.get("max_x_lag", 0)))
@@ -160,7 +147,7 @@ def main():
     torch.save({
         "state_dict": model.state_dict(),
         "X_cols_z": X_cols_z,
-        "y_col": y_col,          # <-- from meta (works for H=0 and H>0)
+        "y_col": y_col,         
         "y_col_z": y_col_z,
         "config": {
             "hidden": HIDDEN,

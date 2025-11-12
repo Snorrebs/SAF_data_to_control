@@ -10,7 +10,7 @@ IN_CSV  = Path("meta_arx/data/1s_data_from_plant/0702_0703_1s_filtered.csv")
 OUT_CSV = Path("meta_arx/data/1s_data_from_plant/0702_0703_1s_filtered_norm.csv")
 STATS_JSON = Path("meta_arx/data/1s_data_from_plant/0702_0703_norm_stats.json")
 
-# Which filtered columns to z-score (typical ARX inputs)
+#filtered columns to z-score
 to_norm = [
     "El1_kA_filt","El2_kA_filt","El3_kA_filt",
     "Tap_A_filt","Tap_B_filt","Tap_C_filt",

@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# plot_pctrl_sim.py
-#
 # Plot ARX P-controller simulation results.
 # Works with output from arx_p_controller_sim.py
 #

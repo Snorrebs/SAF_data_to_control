@@ -14,10 +14,9 @@
 #   --pos-min 2.5 --pos-max 3.8 --dpos-max 0.015 \
 #   --save-csv models/arx_pctrl_sim.csv
 #
-# If the control direction is opposite, just use a negative --kp (e.g., --kp -0.10).
 
 #!/usr/bin/env python3
-# arx_p_controller_sim.py — P-control on resistance using ARX bundle
+#arx_p_controller_sim.py — P-control on resistance using ARX bundle
 from __future__ import annotations
 from pathlib import Path
 import argparse, re

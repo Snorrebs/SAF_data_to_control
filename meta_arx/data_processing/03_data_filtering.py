@@ -17,15 +17,15 @@ exog_cols = [
     "El1_pos_m","El2_pos_m","El3_pos_m",
 ]
 target_col = "residual"
-also_filter_raw_res = True  # keep filtered Tot_Resistance_mOhm for plots
+also_filter_raw_res = True  
 
 # Butterworth params (1 Hz sampling)
 FS = 1.0
 ORDER_EXOG = 4
 ORDER_TGT  = 2
-FC_HZ = 0.05  # 10 mHz cutoff ~ time constant ~ 1/(2π*0.01) ≈ 16 s; tweak if needed
+FC_HZ = 0.05  #  ~ 1/(2π*0.01) ≈ 16 s;
 
-# ---------- UTIL ----------
+
 def lp_butter(series: pd.Series, fs: float, fc: float, order: int) -> pd.Series:
     series = series.astype(float)
     nyq = fs / 2.0
@@ -36,7 +36,6 @@ def lp_butter(series: pd.Series, fs: float, fc: float, order: int) -> pd.Series:
     y = filtfilt(b, a, s, method="gust")
     return pd.Series(y, index=series.index)
 
-# ---------- SCRIPT ----------
 def main():
     assert IN_CSV.exists(), f"Missing input CSV: {IN_CSV}"
     df = pd.read_csv(IN_CSV)
@@ -49,7 +48,7 @@ def main():
         raise ValueError(f"Missing target column '{target_col}'")
     df[f"{target_col}_filt"] = lp_butter(df[target_col], FS, FC_HZ, ORDER_TGT)
 
-    # Optional: filtered raw resistance for QC plots
+
     if also_filter_raw_res and "Tot_Resistance_mOhm" in df.columns:
         df["Tot_Resistance_mOhm_filt"] = lp_butter(df["Tot_Resistance_mOhm"], FS, FC_HZ, ORDER_EXOG)
 

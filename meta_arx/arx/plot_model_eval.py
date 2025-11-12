@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# plot_model_eval.py
-#
 # Usage:
 #   python plot_model_eval.py models/arx_linear_ridge_predictions.csv "ARX (Ridge)"
 #   python plot_model_eval.py models/arx_one_model_predictions.csv    "MLP"

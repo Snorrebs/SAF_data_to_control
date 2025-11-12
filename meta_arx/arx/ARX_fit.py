@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# ARX_fit.py  — train-only scaling, boundary-trimmed split, RidgeCV on lag features
-
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -11,7 +8,7 @@ from sklearn.model_selection import TimeSeriesSplit
 
 # --------------------------- CONFIG ---------------------------
 META_PATH     = Path("arx/arx_prep/model_arx_scalers_30_5_5.meta.joblib")  # from prep
-IN_CSV        = Path("arx/arx_prep/model_arx_30_5_5.csv")
+IN_CSV        = Path("arx/arx_prep/model_arx_30_5_5.csv")                  # from data_processing
 
 MODEL_OUT     = Path("models/arx_linear_ridge.joblib")
 COEF_CSV_OUT  = Path("models/arx_linear_ridge_coefficients_zspace.csv")
@@ -26,7 +23,7 @@ SEED          = 7
 
 # Guards
 VAR_EPS       = 1e-6
-CORR_CUTOFF   = 0.99  # features with |corr(X, y)| above this on TRAIN are dropped
+CORR_CUTOFF   = 0.99  # features with |corr(X, y)| above this on TRAIN are dropped. For testing leakage.
 MIN_SAFE_GAP  = 60    # extra safety against filter/feature window bleed
 
 # --------------------------------------------------------------
@@ -44,7 +41,6 @@ def rmse(a, b):
 def main():
     np.random.seed(SEED)
 
-    # ---------- Load ----------
     assert IN_CSV.exists(), f"Missing dataset: {IN_CSV}"
     assert META_PATH.exists(), f"Missing meta: {META_PATH}"
 
@@ -75,7 +71,7 @@ def main():
     if missing:
         raise ValueError(f"Missing columns in IN_CSV: {missing}")
 
-    # drop any residual NaNs (should be clean already)
+    #should be clean already
     df = df.dropna(subset=need_cols).copy()
 
     # ---------- Time split with GAP + boundary trim ----------
@@ -99,8 +95,7 @@ def main():
     if len(df_te) == 0:
         raise RuntimeError(f"Empty test set after applying gap={gap}.")
 
-    # trim train rows whose labels occur after the train window end
-    # (prevents boundary leakage for y(t+H))
+    # trim train rows whose labels occur after the train window
     df_tr = df_tr[df_tr["target_time"] <= train_end_idx]
     if len(df_tr) == 0:
         raise RuntimeError("All training rows trimmed by target_time; decrease H/gap or increase TRAIN_FRAC/data.")
@@ -132,7 +127,7 @@ def main():
     X_cols = [c for c, k in zip(X_cols, keep) if k]
     Xtr, Xte = Xtr[:, keep], Xte[:, keep]
 
-    # 2) High |corr| with y (suspicious signal — often leakage or order mismatch)
+    # 2) High |corr| with y (suspicious signal — often leakage or order mismatch). Check for leakage.
     if Xtr.shape[1] > 1:
         # corr(X_i, y) across train rows
         corrs = np.corrcoef(np.c_[Xtr, ytr_z].T)[-1, :-1]
@@ -161,7 +156,7 @@ def main():
     yhat_tr_z = model.predict(Xtr)
     yhat_te_z = model.predict(Xte)
 
-    # back to physical units
+    # Reverse scaling
     yhat_tr = y_scaler.inverse_transform(yhat_tr_z.reshape(-1, 1))[:, 0]
     yhat_te = y_scaler.inverse_transform(yhat_te_z.reshape(-1, 1))[:, 0]
 
