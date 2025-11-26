@@ -5,8 +5,8 @@ import joblib
 
 # --------------------------- CONFIG ---------------------------
 IN_CSV         = Path("data/1s_data_from_plant/0702_0703_1s_filtered.csv")
-OUT_CSV        = Path("arx/arx_prep/model_arx_30_5_5.csv")
-SCALERS_PATH   = Path("arx/arx_prep/model_arx_scalers_30_5_5.joblib")  # will write META next to this ...
+OUT_CSV        = Path("arx/arx_prep/model_arx_1_5_5.csv")
+SCALERS_PATH   = Path("arx/arx_prep/model_arx_scalers_1_5_5.joblib")  # will write META next to this ...
 
 # Target (filtered plant)
 Y_FILT_COL     = "Tot_Resistance_mOhm_filt"
@@ -21,14 +21,14 @@ EXOG_BASE = [
 ]
 
 # Lags
-MAX_AR_LAG     = 5
+MAX_AR_LAG     = 1
 MAX_X_LAG      = 5
 
 # Misc
 FORCE_ELECTRODE_CM_TO_M = True
 SAVE_INDEX_TIMESTAMP    = True
 
-H = 13                # forecast horizon in seconds; 0 = predict y(t)
+H = 1                # forecast horizon in seconds; 0 = predict y(t)
 INCLUDE_U_T = False      # True = nowcast (use current inputs u(t)), False = strictly causal
 
 
