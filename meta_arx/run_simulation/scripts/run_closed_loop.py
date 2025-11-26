@@ -25,14 +25,14 @@ def main():
 
 
     # ---- build reference trajectory ----
-    N = 100
-    r = np.full(N, 0.2)  # 0.65 mΩ, for example
+    N = 3000
+    r = np.full(N, 1.2)  # 0.65 mΩ, for example
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp=-0.1, Ki=0.0, Kd=0.0)  # tune later
+    pid = PIDParams(Kp=0.003, Ki=0.0, Kd=0.0)  # tune later
     Ts = 1.0
     u_min, u_max = 0, 3.8
-    du_max = 0.5
+    du_max = 1
 
     # ---- run closed-loop sim ----
     y, u, e = run_closed_loop(

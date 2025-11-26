@@ -74,7 +74,8 @@ def run_closed_loop(
 
         # 3) advance ARX state using new control + predicted y
         #    NOTE: new ArxState.advance no longer takes the bundle
-        state.advance(u_el1_new=u_cmd, y_new=y_pred)
+        state.advance(u_el2_new=u_cmd, y_new=y_pred)
+        #state.advance(u_el1_new=u_cmd, y_new=y_pred)
 
         # 4) log "next" output
         y[k + 1] = y_pred

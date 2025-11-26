@@ -123,7 +123,7 @@ class ArxState:
 
     # ---------- State update (advance one step) ----------
 
-    def advance(self, u_el1_new: float, y_new: float, max_lag: int = 5) -> None:
+    def advance(self, u_el2_new: float, y_new: float, max_lag: int = 5) -> None:
         """
         Advance the ARX state one step:
 
@@ -158,9 +158,9 @@ class ArxState:
             # shift lags: lag(k+1) := old lag(k)
             new[1:] = old[:-1]
 
-            if base == "El1_pos_m_filt":
+            if base == "El2_pos_m_filt":
                 # newest electrode position is the new command
-                new[0] = u_el1_new
+                new[0] = u_el2_new
             elif base == "y_raw":
                 # newest y is the freshly predicted/measured y_new
                 new[0] = y_new
@@ -170,8 +170,8 @@ class ArxState:
 
             self.row.loc[cols] = new
 
-        if "El1_pos_m_filt" in self.row.index:
-            self.row["El1_pos_m_filt"] = u_el1_new
+        if "El2_pos_m_filt" in self.row.index:
+            self.row["El2_pos_m_filt"] = u_el2_new
 
         if "y_target" in self.row.index:
             self.row["y_target"] = y_new
