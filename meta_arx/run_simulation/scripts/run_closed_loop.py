@@ -1,3 +1,5 @@
+#python3 -m run_simulation.scripts.run_closed_loop
+
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -25,18 +27,18 @@ def main():
 
 
     # ---- build reference trajectory ----
-    N = 3000
-    r = np.full(N, 1.2)  # 0.65 mΩ, for example
+    N = 1000
+    r = np.full(N, 1.2) 
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp=0.003, Ki=0.0, Kd=0.0)  # tune later
+    pid = PIDParams(Kp=0.003, Ki=0.0, Kd=0.0)  # tune
     Ts = 1.0
     u_min, u_max = 0, 3.8
     du_max = 1
 
     # ---- run closed-loop sim ----
     y, u, e = run_closed_loop(
-        model=bundle,         # <- it's a dict, but that's fine
+        model=bundle,        
         state=state,
         r=r,
         pid=pid,

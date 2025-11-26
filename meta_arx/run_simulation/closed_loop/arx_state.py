@@ -9,12 +9,6 @@ from joblib import load
 
 @dataclass
 class ArxState:
-    """
-    Lightweight container for the current ARX "state row":
-    - stores y_target, y_raw_lag1..p, exogenous *_lag* cols, etc.
-    - can predict the next y using the stable AR-on-y-only bundle
-    - can advance lagged columns one step given new y and new El1 position
-    """
     row: pd.Series
 
     # ---------- Convenience accessors ----------
@@ -56,7 +50,7 @@ class ArxState:
 
     def predict_next_y(self, bundle: dict, clip_z: float = 10.0) -> float:
         """
-        Predict next y using the *new* AR-on-y-only bundle.
+        Predict next y using the arx.
 
         Model:
             y_z(t) = sum_{i=1..p} a_i * y_z(t-i) + f_exog(X_exog(t))
@@ -91,12 +85,8 @@ class ArxState:
             # z-scale using the same scaler as during training
             mu  = y_scaler.mean_[0]
             sig = y_scaler.scale_[0]
-            y_lags_z = (y_lags_phys - mu) / sig           # shape (p,)
+            y_lags_z = (y_lags_phys - mu) / sig        
 
-            # AR contribution: sum a_i * y_z(t-i)
-            # note: a[i] corresponds to y_z(t-(i+1)) if we used that convention,
-            # but in the trainer we constructed X_tr_ar so that column 0 was y_z(t-1),
-            # column 1 was y_z(t-2), etc → same order here.
             y_ar_z = float(a @ y_lags_z)
         else:
             y_ar_z = 0.0
@@ -112,7 +102,7 @@ class ArxState:
         # ---- 3) Combine and inverse-transform ----
         y_z = y_ar_z + r_hat
 
-        # optional safety clip in z-space (prevents absurd explosions)
+        #safety clip
         if not np.isfinite(y_z):
             y_z = 0.0
         else:
