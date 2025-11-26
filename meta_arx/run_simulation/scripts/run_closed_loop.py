@@ -66,8 +66,8 @@ def main():
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
     df_out.to_csv(OUT_CSV, index=False)
     print(f"[save] {OUT_CSV}")
-    bundle = load("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
-    print(bundle["exog_cols"])
+    # bundle = load("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
+    # print(bundle["exog_cols"])
 
     import run_simulation.scripts.plotting as plotting
     plotting.main()
