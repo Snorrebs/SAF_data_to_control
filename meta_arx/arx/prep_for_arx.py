@@ -30,7 +30,7 @@ SAVE_INDEX_TIMESTAMP    = True
 
 H = 1                # forecast horizon in seconds; 0 = predict y(t)
 INCLUDE_U_T = False      # True = nowcast (use current inputs u(t)), False = strictly causal
-
+K=1
 
 def ensure_parent(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,7 +59,8 @@ def main():
                 m = df[c].dropna().mean()
                 if pd.notna(m) and m > 10.0:
                     df[c] = df[c] / 100.0
-
+                    print("here")
+    
     # ---------- Check target column ----------
     if Y_FILT_COL not in df.columns:
         raise ValueError(f"Need '{Y_FILT_COL}' in the input data.")

@@ -20,7 +20,7 @@ target_col = "residual"
 also_filter_raw_res = True  
 
 # Butterworth params (1 Hz sampling)
-FS = 1.0
+FS = 2.0
 ORDER_EXOG = 4
 ORDER_TGT  = 2
 FC_HZ = 0.05  #  ~ 1/(2π*0.01) ≈ 16 s;
@@ -30,6 +30,7 @@ def lp_butter(series: pd.Series, fs: float, fc: float, order: int) -> pd.Series:
     series = series.astype(float)
     nyq = fs / 2.0
     wn = fc / nyq
+    print(wn)
     b, a = butter(order, wn, btype="low", analog=False)
     # Short gaps → interpolate to avoid edge artifacts
     s = series.interpolate(limit=5).ffill().bfill().values

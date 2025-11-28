@@ -21,8 +21,8 @@ def main():
     w = df.loc[t0:t1]
 
     cols = []
-    if "Tot_Resistance_mOhm" in w.columns: cols.append("Tot_Resistance_mOhm")
-    if "Tot_Resistance_mOhm_filt" in w.columns: cols.append("Tot_Resistance_mOhm_filt")
+    if "Tot_Resistance_mOhm" in w.columns: cols.append("RMS_V_transformer")
+    if "Tot_Resistance_mOhm_filt" in w.columns: cols.append("RMS_V_transformer_filt")
     if not cols:
         raise ValueError("Need Tot_Resistance_mOhm and/or Tot_Resistance_mOhm_filt in CSV.")
 
