@@ -30,13 +30,13 @@ def main():
 
 
     # ---- build reference trajectory ----
-    N = 1000
-    r = np.full(N, 1.0005) 
+    N = 3000
+    r = np.full(N, 1.2) 
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp= -3.84569e-05, Ki=0.000201139, Kd=0.0)  # tune
+    pid = PIDParams(Kp= 0.004, Ki=0, Kd=-2.12791)  # tune
     Ts = 1.0
-    u_min, u_max = 0, 3.8
+    u_min, u_max = 1, 3.8
     du_max = 1
 
     # ---- run closed-loop sim ----
