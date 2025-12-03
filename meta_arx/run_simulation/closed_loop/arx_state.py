@@ -93,7 +93,22 @@ class ArxState:
 
         # ---- 2) Exogenous part on X_exog(t) ----
         if exog_model is not None and exog_cols:
-            X_ex = self.row[exog_cols].to_numpy(dtype=float)[None, :]  # (1, n_ex)
+            # Raw exogenous features at current time
+            X_ex = self.row[exog_cols].to_numpy(dtype=float)[None, :]  # shape (1, n_ex)
+
+            # Handle NaNs robustly for simulation:
+            # - Prefer imputing with the scaler mean_
+            # - Fallback: replace NaN with 0.0
+            if np.isnan(X_ex).any():
+                mu_ex = getattr(Xs_exog, "mean_", None)
+                if mu_ex is not None:
+                    # Broadcast mean over batch dimension
+                    X_ex = np.where(np.isnan(X_ex), mu_ex, X_ex)
+                else:
+                    X_ex = np.nan_to_num(X_ex, nan=0.0)
+                # Optional: debug print
+                # print("[warn] NaNs in exogenous features; imputed with scaler mean/0.")
+
             X_ex_z = Xs_exog.transform(X_ex)
             r_hat = float(exog_model.predict(X_ex_z))
         else:

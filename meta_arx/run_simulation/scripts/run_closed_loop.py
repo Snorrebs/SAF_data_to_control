@@ -1,21 +1,18 @@
 #python3 -m run_simulation.scripts.run_closed_loop
 
-#python -m run_simulation_PID_VRFT.scripts.run_vrft_pid     
-#       --data-csv run_simulation_PID_VRFT/closed_loop/closed_loop_sim.csv     --Ts 1.0     --tau-cl 300
-
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from joblib import load
 
-from run_simulation_PID_VRFT.closed_loop.arx_state import load_arx_bundle, load_initial_state
-from run_simulation_PID_VRFT.closed_loop.closed_loop_sim import run_closed_loop, PIDParams
+from run_simulation_PID.closed_loop.arx_state import load_arx_bundle, load_initial_state
+from run_simulation_PID.closed_loop.closed_loop_sim import run_closed_loop, PIDParams
 
 def main():
     # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_PID_VRFT/models/arx_linear_ridge_stable_yonly.joblib")
-    HIST_CSV   = Path("run_simulation_PID_VRFT/init_data/model_arx_1_5_5.csv")
-    OUT_CSV    = Path("run_simulation_PID_VRFT/closed_loop/closed_loop_sim.csv")
+    MODEL_PATH = Path("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
+    HIST_CSV   = Path("run_simulation/init_data/model_arx_1_5_5.csv")
+    OUT_CSV    = Path("run_simulation/closed_loop/closed_loop_sim.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
     assert HIST_CSV.exists(), f"Missing history CSV: {HIST_CSV}"
@@ -30,13 +27,13 @@ def main():
 
 
     # ---- build reference trajectory ----
-    N = 3000
-    r = np.full(N, 1.2) 
+    N = 1000
+    r = np.full(N, 1.05) 
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp= 0.004, Ki=0, Kd=-2.12791)  # tune
+    pid = PIDParams(Kp=0.003, Ki=0.0, Kd=0.0)  # tune
     Ts = 1.0
-    u_min, u_max = 1, 3.8
+    u_min, u_max = 0, 3.8
     du_max = 1
 
     # ---- run closed-loop sim ----
@@ -72,7 +69,7 @@ def main():
     # bundle = load("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
     # print(bundle["exog_cols"])
 
-    import run_simulation_PID_VRFT.scripts.plotting as plotting
+    import run_simulation_PID.scripts.plotting as plotting
     plotting.main()
 
 
