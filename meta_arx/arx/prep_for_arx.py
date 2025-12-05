@@ -21,7 +21,7 @@ EXOG_BASE = [
 ]
 
 # Lags
-MAX_AR_LAG     = 1
+MAX_AR_LAG     = 2
 MAX_X_LAG      = 5
 
 # Misc

@@ -11,7 +11,7 @@ from sklearn.model_selection import TimeSeriesSplit
 META_PATH     = Path("arx/arx_prep/model_arx_scalers_1_5_5.meta.joblib")
 IN_CSV        = Path("arx/arx_prep/model_arx_1_5_5.csv")
 
-MODEL_OUT     = Path("models/arx_linear_ridge_stable_yonly.joblib")
+MODEL_OUT     = Path("models/arx_mar_stable.joblib")
 COEF_CSV_OUT  = Path("models/arx_linear_ridge_stable_yonly_coefficients_zspace.csv")
 PRED_CSV_OUT  = Path("models/arx_linear_ridge_stable_yonly_predictions.csv")
 
@@ -27,6 +27,8 @@ CORR_CUTOFF   = 1.0
 MIN_SAFE_GAP  = 60
 
 
+POS_BOOST    = 100.0   # 1.0 = no change, >1 = stronger exogenous effect
+
 # --------------------------- utils ---------------------------
 
 def r2_score(y_true, y_pred):
@@ -39,28 +41,75 @@ def rmse(a, b):
     a = np.asarray(a); b = np.asarray(b)
     return float(np.sqrt(np.mean((a - b) ** 2)))
 
-def stabilize_ar_coeffs(a, eps=1e-3):
+def stabilize_ar_coeffs(a, r_target=1, eps=1e-6):
     """
-    Stabilize AR coeffs for:
-        y_t = sum a_i y_{t-i}
-    by reflecting roots of 1 - sum a_i z^{-i} inside the unit circle.
+    Project AR roots to a chosen radius (stable, marginal, or unstable).
+    y_t = sum a_i y_{t-i}
     """
     a = np.asarray(a, dtype=float).ravel()
     if a.size == 0:
         return a
+    
+    # AR polynomial: 1 - a1 z^{-1} - ...
     poly = np.r_[1.0, -a]
     roots = np.roots(poly)
-    changed = False
-    for i, r in enumerate(roots):
+    
+    new_roots = []
+    for r in roots:
         mag = np.abs(r)
-        if mag >= 1.0:
-            roots[i] = r / (mag + eps)
-            changed = True
-    if not changed:
+        angle = np.angle(r)
+
+        # PROJECT root to r_target if it's outside OR if you want exact radius control
+        if mag != 0:
+            new_root = r_target * np.exp(1j * angle)
+        else:
+            new_root = r_target
+        new_roots.append(new_root)
+    
+    # back to polynomial
+    poly_new = np.poly(new_roots)
+    
+    # extract AR coeffs (note the sign)
+    return -poly_new[1:].real
+import numpy as np
+
+def destabilize_ar_coeffs(a, r_min=1.01, eps=1e-6):
+    """
+    Force AR coeffs to be UNSTABLE by pushing roots of
+        1 - sum a_i z^{-i}
+    OUTSIDE the unit circle: |root| >= r_min (>1).
+    """
+    a = np.asarray(a, dtype=float).ravel()
+    if a.size == 0:
         return a
-    poly_stab = np.poly(roots)
-    a_stab = -poly_stab[1:].real
-    return a_stab
+
+    # Build AR polynomial
+    poly = np.r_[1.0, -a]
+    roots = np.roots(poly)
+
+    new_roots = []
+    for r in roots:
+        mag = np.abs(r)
+        if mag == 0:
+            # arbitrary angle, just pick real >0
+            new_roots.append(r_min)
+            continue
+
+        if mag < r_min:
+            # push OUT to radius r_min (keep angle)
+            new_r = r * (r_min / (mag + eps))
+        else:
+            # already outside enough, keep as-is
+            new_r = r
+        new_roots.append(new_r)
+
+    new_roots = np.array(new_roots)
+    poly_unstable = np.poly(new_roots)
+    a_unstable = -poly_unstable[1:].real
+    print(np.roots(poly))
+    print(np.abs(np.roots(poly)))
+    return a_unstable
+
 
 
 # --------------------------- main ---------------------------
@@ -211,6 +260,8 @@ def main():
         a_hat, *_ = np.linalg.lstsq(X_tr_ar, y_tr_z, rcond=None)
         a_hat = a_hat.ravel()
         a_stab = stabilize_ar_coeffs(a_hat)
+        # a_stab = destabilize_ar_coeffs(a_hat)
+
         print(f"[AR] raw coeffs: {a_hat}")
         print(f"[AR] stabilized coeffs: {a_stab}")
 
@@ -275,8 +326,22 @@ def main():
             exog_model = Ridge(alpha=RIDGE_ALPHA, random_state=SEED)
             exog_model.fit(X_tr_ex, r_tr)
 
+        if POS_BOOST != 1.0:
+            coef = exog_model.coef_.copy()
+            for i, col in enumerate(X_ex_cols_final):
+                # adapt the name check to your actual column names if needed
+                if (
+                    "El1_pos_m" in col
+                    or "El2_pos_m" in col
+                    or "El3_pos_m" in col
+                ):
+                    coef[i] *= POS_BOOST
+            exog_model.coef_ = coef
+            print(f"[exog] Applied POS_BOOST = {POS_BOOST} to El*_pos_m features")
+
         rhat_tr = exog_model.predict(X_tr_ex)
         rhat_te = exog_model.predict(X_te_ex)
+
     else:
         X_scaler_exog = None
         exog_model = None
