@@ -16,7 +16,7 @@ def main():
     t = df["t_s"]
     y = df["y_pred_mOhm"]
     r = df["r"]
-    u = df["u_El2_pos_m"]
+    u = df["u_El1_pos_m"]
     e = df["e"]
 
     # --- figure ---
@@ -31,7 +31,7 @@ def main():
     axs[0].grid(True, alpha=0.3)
 
     # --- control signal ---
-    axs[1].plot(t, u, label="El2 position", color="C1", lw=2)
+    axs[1].plot(t, u, label="El1 position", color="C1", lw=2)
     axs[1].set_ylabel("Electrode Position [m]")
     axs[1].legend()
     axs[1].grid(True, alpha=0.3)

@@ -24,11 +24,11 @@ class ArxState:
             return float(self.row["y_raw_lag1"])
         raise KeyError("No y_target or y_raw_lag1 in ARX state")
 
-    def current_u_El2(self) -> float:
+    def current_u_el1(self) -> float:
         """
-        Return the most recent El2 position (m) from the state row.
+        Return the most recent El1 position (m) from the state row.
         """
-        for c in ["El2_pos_m_filt_lag1", "El2_pos_m_filt"]:
+        for c in ["El1_pos_m_filt_lag1", "El1_pos_m_filt"]:
             if c in self.row.index:
                 return float(self.row[c])
         return 0.0
@@ -113,18 +113,18 @@ class ArxState:
 
     # ---------- State update (advance one step) ----------
 
-    def advance(self, u_El2_new: float, y_new: float, max_lag: int = 5) -> None:
+    def advance(self, u_el2_new: float, y_new: float, max_lag: int = 5) -> None:
         """
         Advance the ARX state one step:
 
         - Update y-lag columns y_raw_lag1..lagp with the new y (physical units).
-        - Update El2_pos_m_filt_lag* with the new electrode command.
+        - Update El1_pos_m_filt_lag* with the new electrode command.
         - For all other *_lagk bases, shift the lag window and keep lag1 frozen
           (i.e. use previous lag1 as new lag1).
 
         This assumes:
             - y_raw_lag1 holds y(t-1), y_raw_lag2=y(t-2), ...
-            - El2_pos_m_filt_lag1 holds the most recent commanded El2 position.
+            - El1_pos_m_filt_lag1 holds the most recent commanded El1 position.
         """
         # ---- generic base detection for *_lag1..lagN ----
         lag1_suffix = "_lag1"
@@ -150,7 +150,7 @@ class ArxState:
 
             if base == "El2_pos_m_filt":
                 # newest electrode position is the new command
-                new[0] = u_El2_new
+                new[0] = u_el2_new
             elif base == "y_raw":
                 # newest y is the freshly predicted/measured y_new
                 new[0] = y_new
@@ -161,7 +161,7 @@ class ArxState:
             self.row.loc[cols] = new
 
         if "El2_pos_m_filt" in self.row.index:
-            self.row["El2_pos_m_filt"] = u_El2_new
+            self.row["El2_pos_m_filt"] = u_el2_new
 
         if "y_target" in self.row.index:
             self.row["y_target"] = y_new

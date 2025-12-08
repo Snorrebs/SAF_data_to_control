@@ -10,7 +10,7 @@ from run_simulation_PID.closed_loop.closed_loop_sim import run_closed_loop, PIDP
 
 def main():
     # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_PID/models/arx_mar_stable.joblib")
+    MODEL_PATH = Path("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
     HIST_CSV   = Path("run_simulation/init_data/model_arx_1_5_5.csv")
     OUT_CSV    = Path("run_simulation/closed_loop/closed_loop_sim.csv")
 
@@ -22,16 +22,16 @@ def main():
     state = load_initial_state(str(HIST_CSV), bundle)
 
     # initial electrode position for logging
-    u0 = state.current_u_El2()
+    u0 = state.current_u_el1()
 
 
 
     # ---- build reference trajectory ----
     N = 1000
-    r = np.full(N, 1.1) 
+    r = np.full(N, 1.05) 
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp=0.0001, Ki=0, Kd=0.1)  # tune
+    pid = PIDParams(Kp=0.003, Ki=0.0, Kd=0.0)  # tune
     Ts = 1.0
     u_min, u_max = 0, 3.8
     du_max = 1
@@ -58,7 +58,7 @@ def main():
         {
             "t_s": t,
             "y_pred_mOhm": y,
-            "u_El2_pos_m": u_log,
+            "u_El1_pos_m": u_log,
             "e": np.append(e, np.nan),
             "r": np.append(r, np.nan),
         }
