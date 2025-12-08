@@ -1,6 +1,6 @@
 # run_simulation/scripts/plot_closed_loop_vrft_comparison.py
 # Usage (from repo root):
-#   python -m run_simulation.scripts.plot_closed_loop_vrft_comparison
+#   python -m run_simulation_online_VRFT.scripts.plot_closed_loop_vrft_comparison
 
 from pathlib import Path
 
@@ -9,8 +9,8 @@ import pandas as pd
 
 
 def main():
-    base_csv = Path("run_simulation/closed_loop/closed_loop_sim.csv")
-    vrft_csv = Path("run_simulation/closed_loop/closed_loop_sim_vrft_online.csv")
+    base_csv = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim.csv")
+    vrft_csv = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim_vrft_online.csv")
 
     if not base_csv.exists():
         raise FileNotFoundError(f"Baseline CSV not found: {base_csv}")

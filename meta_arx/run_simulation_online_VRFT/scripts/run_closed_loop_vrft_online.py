@@ -1,21 +1,21 @@
 # run_simulation/scripts/run_closed_loop_vrft_online.py
 # Usage (from repo root):
-#   python -m run_simulation.scripts.run_closed_loop_vrft_online
+#   python -m run_simulation_online_VRFT.scripts.run_closed_loop_vrft_online
 
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from run_simulation.closed_loop.arx_state import load_arx_bundle, load_initial_state
-from run_simulation.closed_loop.closed_loop_sim import PIDParams
-from run_simulation.closed_loop.vrft_online import OnlineVRFTPID
+from run_simulation_online_VRFT.closed_loop.arx_state import load_arx_bundle, load_initial_state
+from run_simulation_online_VRFT.closed_loop.closed_loop_sim import PIDParams
+from run_simulation_online_VRFT.closed_loop.vrft_online import OnlineVRFTPID
 
 
 def main():
     # ---- Paths (adapt as needed) ----
-    MODEL_PATH = Path("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
-    HIST_CSV   = Path("run_simulation/init_data/model_arx_1_5_5.csv")
-    OUT_CSV    = Path("run_simulation/closed_loop/closed_loop_sim_vrft_online.csv")
+    MODEL_PATH = Path("run_simulation_online_VRFT/models/arx_linear_ridge_stable_yonly.joblib")
+    HIST_CSV   = Path("run_simulation_online_VRFT/init_data/model_arx_1_5_5.csv")
+    OUT_CSV    = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim_vrft_online.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
     assert HIST_CSV.exists(), f"Missing history CSV: {HIST_CSV}"
