@@ -1,24 +1,25 @@
-#python3 -m run_simulation.scripts.run_closed_loop
+#python3 -m run_simulation_offline_VRFT.scripts.run_closed_loop
 
-#python -m run_simulation_PID_VRFT.scripts.run_vrft_pid     
-#       --data-csv run_simulation_PID_VRFT/closed_loop/closed_loop_sim.csv     --Ts 1.0     --tau-cl 300
+#python -m run_simulation_offline_VRFT.scripts.run_vrft_pid_offline     
+#       --data-csv run_simulation_offline_VRFT/closed_loop/closed_loop_sim.csv     --Ts 1.0     --tau-cl 300
 
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from joblib import load
 
-from run_simulation_PID_VRFT.closed_loop.arx_state import load_arx_bundle, load_initial_state
-from run_simulation_PID_VRFT.closed_loop.closed_loop_sim import run_closed_loop, PIDParams
+from run_simulation_offline_VRFT.closed_loop.arx_state import load_arx_bundle, load_initial_state
+from run_simulation_offline_VRFT.closed_loop.closed_loop_sim import run_closed_loop, PIDParams
 
 def main():
     # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_PID_VRFT/models/arx_linear_ridge_stable_yonly.joblib")
-    HIST_CSV   = Path("run_simulation_PID_VRFT/init_data/model_arx_1_5_5.csv")
-    OUT_CSV    = Path("run_simulation_PID_VRFT/closed_loop/closed_loop_sim.csv")
+    MODEL_PATH = Path("run_simulation_offline_VRFT/models/arx_linear_ridge_stable_yonly.joblib")
+    HIST_CSV   = Path("run_simulation_offline_VRFT/init_data/model_arx_1_5_5.csv")
+    OUT_CSV    = Path("run_simulation_offline_VRFT/closed_loop/closed_loop_sim.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
     assert HIST_CSV.exists(), f"Missing history CSV: {HIST_CSV}"
+
 
     # ---- load model + initial ARX state ----
     bundle = load_arx_bundle(str(MODEL_PATH))
@@ -30,7 +31,7 @@ def main():
 
 
     # ---- build reference trajectory ----
-    N = 3000
+    N = 1000
     r = np.full(N, 1.2) 
 
     # ---- PID params + limits ----
@@ -72,7 +73,7 @@ def main():
     # bundle = load("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
     # print(bundle["exog_cols"])
 
-    import run_simulation_PID_VRFT.scripts.plotting as plotting
+    import run_simulation_offline_VRFT.scripts.plotting as plotting
     plotting.main()
 
 
