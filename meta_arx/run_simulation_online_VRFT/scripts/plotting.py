@@ -6,7 +6,7 @@ from pathlib import Path
 
 def main():
     # Adjust if needed
-    CSV = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim.csv")
+    CSV = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim1.csv")
 
     assert CSV.exists(), f"Missing file: {CSV}"
 

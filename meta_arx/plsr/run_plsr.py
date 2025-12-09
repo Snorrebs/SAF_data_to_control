@@ -43,13 +43,13 @@ def main():
         m = metrics(y, yhat)
         print(f"[fit  ] {y_col}  R^2={m['r2']:.3f}, RMSE={m['rmse']:.3f}, XIS features={X.shape[1]}")
         X_df = pd.DataFrame(X, columns=names)
-        save_path = "SAF_data_to_control/metamodel/src/models/plsr_ge28.pkl"
+        save_path = "meta_arx/metamodel/plsr_ge28_2.pkl"
         n_components = pls.n_components
         art = {
             "pls": pls,                              # fitted PLSRegression
             "x_terms": list(X_df.columns),           # <- critical
             "target_name": "Tot_Resistance_mOhm",
-            "n_components": n_components,    # optional, for documentation
+            "n_components": n_components,    
         }
         joblib.dump(art, "plsr_with_terms.joblib")
         print("Saved metamodel with its X-term names.")

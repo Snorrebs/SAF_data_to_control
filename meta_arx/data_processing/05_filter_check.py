@@ -1,35 +1,73 @@
 #!/usr/bin/env python3
-# filter_check.py
+"""
+Quick script to inspect raw vs filtered signals.
+
+Edit the CONFIG section:
+- CSV_PATH: which filtered file to inspect
+- START / END: time window (or set to None to use full range)
+- VARS: list of (raw_col, filt_col) pairs to plot
+"""
+
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-plt.tight_layout()
 
-IN_CSV = Path("meta_arx/data/1s_data_from_plant/0702_0703_1s_filtered.csv")
+# ----------------- CONFIG -----------------
+CSV_PATH = Path("meta_arx/data/filt_data/07_24_filt.csv")
 
-START = "2022-07-07 02:00:30+02:00"  # example from your data
-MINUTES = 20
+# Time window (set to None to use full range)
+START = "2022-07-06 22:01:00+00:00"   # or None
+END   = "2022-07-06 23:00:00+00:00"   # or None
+
+# Variables to plot: (raw_column_name, filtered_column_name)
+VARS = [
+    ("El1_Resistance_mOhm", "El1_Resistance_mOhm_filt"),
+    # ("Tot_Resistance_mOhm", "Tot_Resistance_mOhm_filt"),
+    # ("El1_dpos_mps", "El1_dpos_mps_filt"),
+    # ("El1_kA", "El1_kA_filt"),
+    # ("RMS_V_transformer", "RMS_V_transformer_filt"),
+]
+# Just comment/uncomment lines in VARS to choose which signals to see.
+# -----------------------------------------
+
 
 def main():
-    assert IN_CSV.exists(), f"Missing input CSV: {IN_CSV}"
-    df = pd.read_csv(IN_CSV)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    # Load
+    df = pd.read_csv(CSV_PATH, parse_dates=["timestamp"])
+    if "timestamp" not in df.columns:
+        raise ValueError("Expected a 'timestamp' column in the CSV.")
     df = df.set_index("timestamp").sort_index()
 
-    t0 = pd.to_datetime(START)
-    t1 = t0 + pd.Timedelta(minutes=MINUTES)
-    w = df.loc[t0:t1]
+    # Time slicing
+    if START is not None:
+        df = df[df.index >= pd.to_datetime(START)]
+    if END is not None:
+        df = df[df.index < pd.to_datetime(END)]
 
-    cols = []
-    if "Tot_Resistance_mOhm" in w.columns: cols.append("RMS_V_transformer")
-    if "Tot_Resistance_mOhm_filt" in w.columns: cols.append("RMS_V_transformer_filt")
-    if not cols:
-        raise ValueError("Need Tot_Resistance_mOhm and/or Tot_Resistance_mOhm_filt in CSV.")
+    if df.empty:
+        raise ValueError("No data left after applying START/END window.")
 
-    ax = w[cols].plot(title=f"Resistance (raw vs filtered)\n{t0} → {t1}", lw=1.2)
-    ax.set_ylabel("mΩ")
-    ax.grid(True, alpha=0.3)
+    # Plot each raw/filtered pair
+    for raw_col, filt_col in VARS:
+        if raw_col not in df.columns:
+            print(f"[WARN] raw column '{raw_col}' not in DataFrame, skipping.")
+            continue
+        if filt_col not in df.columns:
+            print(f"[WARN] filtered column '{filt_col}' not in DataFrame, skipping.")
+            continue
+
+        plt.figure(figsize=(12, 4))
+        plt.plot(df.index, df[raw_col], label=f"{raw_col} (raw)", alpha=0.5)
+        plt.plot(df.index, df[filt_col], label=f"{filt_col} (filtered)", linewidth=1.8)
+        plt.title(f"{raw_col} – raw vs filtered")
+        plt.xlabel("Time")
+        plt.ylabel(raw_col)
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+
     plt.show()
+
 
 if __name__ == "__main__":
     main()

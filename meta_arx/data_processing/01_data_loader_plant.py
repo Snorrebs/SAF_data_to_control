@@ -91,31 +91,79 @@ print("[abs path]    ", Path(__file__).resolve())
 # Raw to readable names
 RAW_TO_READABLE = {
     "Datetime": "timestamp",
-    # Measurements
-    "\\\\ZMUCPI01\\V1903T870EE976.1 UL1N": "UL1N_V",
-    "\\\\ZMUCPI01\\V1903T870EE976.1 UL2N": "UL2N_V",
-    "\\\\ZMUCPI01\\V1903T870EE976.1 UL3N": "UL3N_V",
-    "\\\\ZMUCPI01\\V1903T830EG104.1 GI": "El1_pos_m",
-    "\\\\ZMUCPI01\\V1903T830EG204.1 GI": "El2_pos_m",
-    "\\\\ZMUCPI01\\V1903T830EG304.1 GI": "El3_pos_m",
-    "\\\\ZMUCPI01\\V1903T830EU100.1 Strøm": "El1_kA",
-    "\\\\ZMUCPI01\\V1903T830EU200.1 Strøm": "El2_kA",
-    "\\\\ZMUCPI01\\V1903T830EU300.1 Strøm": "El3_kA",
-    "\\\\ZMUCPI01\\V1903T830EU102.1 TCA": "Tap_A",
-    "\\\\ZMUCPI01\\V1903T830EU102.1 TCB": "Tap_B",
-    "\\\\ZMUCPI01\\V1903T830EU102.1 TCC": "Tap_C",
-    "\\\\ZMUCPI01\\V1903T830EU102.1 Effekt": "Furnace_power_MW",
-    "\\\\ZMUCPI01\\V1903T870EU104 CalcResTot": "Tot_Resistance_mOhm",
+
+    # -------- Furnace-level electricals (A) --------
+    r"\\ZMUCPI01\V1903T830EU102.1 Effekt":        "Furnace_power_MW",
+    r"\\ZMUCPI01\V1903T870EU104 CalcResTot":      "Tot_Resistance_mOhm",
+
+    # -------- Furnace C3 (A/B important) --------
+    r"\\ZMUCPI01\V1903T830EU101.1 C3":            "Furnace_C3",
+
+    # -------- Electrode holder positions (A) --------
+    r"\\ZMUCPI01\V1903T830EG104.1 GI":            "El1_pos_m",
+    r"\\ZMUCPI01\V1903T830EG204.1 GI":            "El2_pos_m",
+    r"\\ZMUCPI01\V1903T830EG304.1 GI":            "El3_pos_m",
+
+    # -------- Phase voltages (A) --------
+    r"\\ZMUCPI01\V1903T870EE976.1 UL1N":          "UL1N_V",
+    r"\\ZMUCPI01\V1903T870EE976.1 UL2N":          "UL2N_V",
+    r"\\ZMUCPI01\V1903T870EE976.1 UL3N":          "UL3N_V",
+
+    # -------- Electrode currents (A) --------
+    r"\\ZMUCPI01\V1903T830EU100.1 Strøm":         "El1_kA",
+    r"\\ZMUCPI01\V1903T830EU200.1 Strøm":         "El2_kA",
+    r"\\ZMUCPI01\V1903T830EU300.1 Strøm":         "El3_kA",
+
+    # -------- Electrode resistances per phase (A, important for future) --------
+    r"\\ZMUCPI01\V1903T830EU100.1 Resistans":     "El1_Resistance_mOhm",
+    r"\\ZMUCPI01\V1903T830EU200.1 Resistans":     "El2_Resistance_mOhm",
+    r"\\ZMUCPI01\V1903T830EU300.1 Resistans":     "El3_Resistance_mOhm",
+
+    # -------- Transformer taps (A) --------
+    r"\\ZMUCPI01\V1903T830EU102.1 TCA":           "Tap_A",
+    r"\\ZMUCPI01\V1903T830EU102.1 TCB":           "Tap_B",
+    r"\\ZMUCPI01\V1903T830EU102.1 TCC":           "Tap_C",
+
+    # -------- Setpoints (trimmed B: only furnace + El1) --------
+    r"\\ZMUCPI01\V1903T830EU102.1 Effekt SP":     "Furnace_power_MW_SP",
+    r"\\ZMUCPI01\V1903T830EU101.1 C3 SP":         "Furnace_C3_SP",
+
+    r"\\ZMUCPI01\V1903T830EU100.1 Resistans SP":  "El1_Resistance_SP_mOhm",
+    r"\\ZMUCPI01\V1903T830EU100.1 Strøm SP":      "El1_kA_SP",
+
+    # -------- El1 regulation modes (trimmed B) --------
+    r"\\ZMUCPI01\V1903T830EU100.1 StrømModus":         "El1_current_mode",
+    r"\\ZMUCPI01\V1903T830EU100.1 ResistansModus":     "El1_resistance_mode",
 }
 
-
-
 CONTROL_COLS = [
-    "UL1N_V", "UL2N_V", "UL3N_V",
+    # --- ARX-critical signals ---
+    "UL1N_V", "UL2N_V", "UL3N_V",        # phase voltages
     "El1_pos_m", "El2_pos_m", "El3_pos_m",
     "El1_kA", "El2_kA", "El3_kA",
     "Tap_A", "Tap_B", "Tap_C",
+
+    # --- Furnace-level context ---
+    "Furnace_power_MW",
+    "Furnace_C3",
+
+    # --- Electrode-level context (for later models/diagnostics) ---
+    "El1_Resistance_mOhm", "El2_Resistance_mOhm", "El3_Resistance_mOhm",
+
+    # --- Setpoints (trimmed B) ---
+    "Furnace_power_MW_SP", "Furnace_C3_SP",
+    "El1_Resistance_SP_mOhm", "El1_kA_SP",
+
+    # --- Regulation modes (trimmed B) ---
+    "El1_current_mode", "El1_resistance_mode",
 ]
+
+TARGET_COL = "Tot_Resistance_mOhm"
+TIME_COL   = "timestamp"
+
+TARGET_COL = "Tot_Resistance_mOhm"
+TIME_COL   = "timestamp"
+
 
 TARGET_COL = "Tot_Resistance_mOhm"
 TIME_COL   = "timestamp"
@@ -330,9 +378,9 @@ if __name__ == "__main__":
     # Replace valus with your values
     make_training_csv_chunked(
         input_csv=r"meta_arx/data/raw/PI-data.csv",
-        output_csv=r"meta_arx/data/1s_data_from_plant/0702_0703_1s.csv",
-        start="2022-07-07 02:00:01+02:00",
-        end="2022-07-07 03:00:01+02:00",
+        output_csv=r"meta_arx/data/1s_data_from_plant/0702_0703_1s_new.csv",
+        start="2022-07-07 00:01:01+02:00",
+        end="2022-07-07 23:59:01+02:00",
         resample_seconds=1,
         keep_every_n=300,
         change_eps=5e-4,

@@ -13,8 +13,8 @@ from run_simulation_online_VRFT.closed_loop.vrft_online import OnlineVRFTPID
 
 def main():
     # ---- Paths (adapt as needed) ----
-    MODEL_PATH = Path("run_simulation_online_VRFT/models/arx_linear_ridge_stable_yonly.joblib")
-    HIST_CSV   = Path("run_simulation_online_VRFT/init_data/model_arx_1_5_5.csv")
+    MODEL_PATH = Path("run_simulation_online_VRFT/models/arx_el1res_2321_07.meta.joblib")
+    HIST_CSV   = Path("run_simulation_online_VRFT/init_data/arx_el1res_2321_07.csv")
     OUT_CSV    = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim_vrft_online.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
@@ -36,8 +36,8 @@ def main():
     r = np.full(N, 1.05, dtype=float)
 
     # Actuator limits
-    u_min, u_max = 0.0, 3.8
-    du_max = 0.01
+    u_min, u_max = -5, 5
+    du_max = 1
 
     # Initial PID guess (before VRFT has enough data)
     pid_init = PIDParams(Kp=0.003, Ki=0.0, Kd=0.0)

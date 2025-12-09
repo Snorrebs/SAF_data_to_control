@@ -9,7 +9,7 @@ import pandas as pd
 
 
 def main():
-    base_csv = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim.csv")
+    base_csv = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim1.csv")
     vrft_csv = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim_vrft_online.csv")
 
     if not base_csv.exists():

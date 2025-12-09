@@ -10,9 +10,9 @@ from run_simulation_online_VRFT.closed_loop.closed_loop_sim import run_closed_lo
 
 def main():
     # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_online_VRFT/models/arx_linear_ridge_stable_yonly.joblib")
-    HIST_CSV   = Path("run_simulation_online_VRFT/init_data/model_arx_1_5_5.csv")
-    OUT_CSV    = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim.csv")
+    MODEL_PATH = Path("run_simulation_online_VRFT/models/arx_el1res_2321_07.meta.joblib")
+    HIST_CSV   = Path("run_simulation_online_VRFT/init_data/arx_el1res_2321_07.csv")
+    OUT_CSV    = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim1.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
     assert HIST_CSV.exists(), f"Missing history CSV: {HIST_CSV}"
@@ -31,9 +31,9 @@ def main():
     r = np.full(N, 1.05) 
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp=0.003, Ki=0.0, Kd=0.0)  # tune
+    pid = PIDParams(Kp=-0.00003, Ki=0.00000, Kd=0.0)  # tune
     Ts = 1.0
-    u_min, u_max = 0, 3.8
+    u_min, u_max = -5, 5
     du_max = 1
 
     # ---- run closed-loop sim ----

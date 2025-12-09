@@ -5,8 +5,8 @@
 Build a SISO ARX regression table from filtered plant data, with z-normalization.
 
 Signals (filtered):
-- Target: El1_Resistance_mOhm_filt
-- Input (manipulated): El1_dpos_mps_filt (holder movement speed)
+- Target: Tot_Resistance_mOhm_filt
+- Input (manipulated): El1_dpos_mps_filt
 - Disturbances: El1_kA_filt, RMS_V_transformer_filt
 
 ARX structure (all t in seconds, sampling 1 Hz):
@@ -29,23 +29,23 @@ import numpy as np
 import joblib
 
 # --------------------------- CONFIG ---------------------------
-IN_CSV    = Path("meta_arx/data/filt_data/07_24_filt.csv")
-OUT_CSV   = Path("meta_arx/arx/arx_prep_data/arx_el1res_2321_07.csv")
-META_PATH = Path("meta_arx/arx/arx_prep_meta/arx_el1res_2321_07.meta.joblib")
+IN_CSV   = Path("meta_arx/data/1s_data_from_plant/0702_0703_1s_filtered.csv")
+OUT_CSV  = Path("meta_arx/arx/arx_prep/model_arx_siso_norm.csv")
+META_PATH = Path("meta_arx/arx/arx_prep/model_arx_siso_norm.meta.joblib")
 
-# Target (filtered electrode-1 resistance in mΩ)
-Y_FILT_COL = "El1_Resistance_mOhm_filt"
+# Target (filtered plant). Change this to electrode-1 resistance when available.
+Y_FILT_COL = "Tot_Resistance_mOhm_filt"
 
 # Filtered input/disturbance signals produced by script 2
-U_FILT_COL    = "El1_dpos_mps_filt"       # manipulated variable (velocity)
+U_FILT_COL    = "El1_dpos_mps_filt"       # manipulated variable
 I1_FILT_COL   = "El1_kA_filt"             # disturbance current
 VSEC_FILT_COL = "RMS_V_transformer_filt"  # disturbance voltage
 
 # Lags matching the chosen ARX structure
-MAX_AR_LAG   = 2   # y(t-1..2)
-MAX_U_LAG    = 3   # u(t-1..3)
-MAX_I1_LAG   = 2   # I1(t-1..2)
-MAX_VSEC_LAG = 1   # Vsec(t-1)
+MAX_AR_LAG  = 2   # y(t-1..2)
+MAX_U_LAG   = 3   # u(t-1..3)
+MAX_I1_LAG  = 2   # I1(t-1..2)
+MAX_VSEC_LAG = 1  # Vsec(t-1)
 
 # Forecast horizon (H = 0 → predict y(t))
 H = 0
@@ -117,6 +117,22 @@ def main():
     keep_cols = ["target_time", target_col] + feat_cols
     df_arx = df_all[keep_cols].copy()
 
+    # ---------- Z-normalization ----------
+    # We normalize both the target and all feature columns.
+    norm_cols = [target_col] + feat_cols
+
+    mu = {}
+    sigma = {}
+    for c in norm_cols:
+        m = df_arx[c].mean()
+        s = df_arx[c].std(ddof=0)
+        if s == 0 or np.isnan(s):
+            # avoid division by zero; if zero-variance, set s=1 (effectively no scaling)
+            s = 1.0
+        mu[c] = float(m)
+        sigma[c] = float(s)
+        df_arx[c] = (df_arx[c] - m) / s
+
     # ---------- Save normalized ARX dataset ----------
     if SAVE_INDEX_TIMESTAMP:
         df_arx = df_arx.rename_axis("timestamp")
@@ -127,6 +143,11 @@ def main():
     meta = {
         "y_col": target_col,
         "X_cols": feat_cols,
+        "norm": {
+            "mu": mu,
+            "sigma": sigma,
+            "columns": norm_cols,
+        },
         "config": {
             "horizon": H,
             "lags": {
@@ -141,8 +162,6 @@ def main():
                 "I1_filt": I1_FILT_COL,
                 "Vsec_filt": VSEC_FILT_COL,
             },
-            "max_ar_lag": MAX_AR_LAG,
-            "max_x_lag": max(MAX_U_LAG, MAX_I1_LAG, MAX_VSEC_LAG),
         },
     }
     ensure_parent(META_PATH)
@@ -156,4 +175,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
