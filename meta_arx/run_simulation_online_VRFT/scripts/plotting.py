@@ -20,7 +20,7 @@ def main():
     e = df["e"]
 
     # --- figure ---
-    fig, axs = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
+    fig, axs = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
     fig.suptitle("Closed-loop ARX Simulation", fontsize=14)
 
     # --- resistance plot ---
@@ -32,16 +32,16 @@ def main():
 
     # --- control signal ---
     axs[1].plot(t, u, label="El1 position", color="C1", lw=2)
-    axs[1].set_ylabel("Electrode Position [m]")
+    axs[1].set_ylabel("Electrode movement [m/s]")
     axs[1].legend()
     axs[1].grid(True, alpha=0.3)
 
-    # --- error ---
-    axs[2].plot(t, e, label="Error (r - y)", color="C2", lw=2)
-    axs[2].set_ylabel("Error [mΩ]")
-    axs[2].set_xlabel("Time [s]")
-    axs[2].legend()
-    axs[2].grid(True, alpha=0.3)
+    # # --- error ---
+    # axs[2].plot(t, e, label="Error (r - y)", color="C2", lw=2)
+    # axs[2].set_ylabel("Error [mΩ]")
+    # axs[2].set_xlabel("Time [s]")
+    # axs[2].legend()
+    # axs[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.show()
