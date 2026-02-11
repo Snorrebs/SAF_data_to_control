@@ -13,8 +13,8 @@ from run_simulation_offline_VRFT.closed_loop.closed_loop_sim import run_closed_l
 
 def main():
     # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_offline_VRFT/models/arx_linear_ridge_stable_yonly.joblib")
-    HIST_CSV   = Path("run_simulation_offline_VRFT/init_data/model_arx_1_5_5.csv")
+    MODEL_PATH = Path("run_simulation_offline_VRFT/models/arx_el1res_2321_07.meta.joblib")
+    HIST_CSV   = Path("run_simulation_offline_VRFT/init_data/arx_el1res_2321_07.csv")
     OUT_CSV    = Path("run_simulation_offline_VRFT/closed_loop/closed_loop_sim.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
@@ -31,14 +31,14 @@ def main():
 
 
     # ---- build reference trajectory ----
-    N = 1000
+    N = 200
     r = np.full(N, 1.2) 
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp= 0.004, Ki=0, Kd=-2.12791)  # tune
+    pid = PIDParams(Kp= 0.02, Ki=0, Kd=0.0)  # tune
     Ts = 1.0
-    u_min, u_max = 1, 3.8
-    du_max = 1
+    u_min, u_max = -5, 5
+    du_max = 0.01
 
     # ---- run closed-loop sim ----
     y, u, e = run_closed_loop(
