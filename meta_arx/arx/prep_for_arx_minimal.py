@@ -42,7 +42,7 @@ I1_FILT_COL   = "El1_kA_filt"             # disturbance current
 VSEC_FILT_COL = "RMS_V_transformer_filt"  # disturbance voltage
 
 # Lags matching the chosen ARX structure
-MAX_AR_LAG  = 2   # y(t-1..2)
+MAX_AR_LAG  = 5   # y(t-1..2)
 MAX_U_LAG   = 3   # u(t-1..3)
 MAX_I1_LAG  = 2   # I1(t-1..2)
 MAX_VSEC_LAG = 1  # Vsec(t-1)

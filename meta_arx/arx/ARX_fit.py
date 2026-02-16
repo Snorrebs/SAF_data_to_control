@@ -4,26 +4,27 @@ from typing import List, Dict, Any
 import numpy as np
 import pandas as pd
 from joblib import load, dump
-from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import RidgeCV, Ridge
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 
 
 # --------------------------- CONFIG ---------------------------
 
-MODEL_NAME     = "arx_el1res_2321_07"
+MODEL_NAME_IN     = "arx_el1res_5543_07"
+MODEL_NAME_OUT = "arx_el1res_5543_07_no_ridge"
+META_PATH      = Path("arx/arx_prep_meta") / f"{MODEL_NAME_IN}.meta.joblib"
+IN_CSV         = Path("arx/arx_prep_data") / f"{MODEL_NAME_IN}.csv"
 
-META_PATH      = Path("arx/arx_prep_meta") / f"{MODEL_NAME}.meta.joblib"
-IN_CSV         = Path("arx/arx_prep_data") / f"{MODEL_NAME}.csv"
-
-MODEL_OUT      = Path("arx/models/model_meta") / f"{MODEL_NAME}.meta.joblib"
-COEF_CSV_OUT   = Path("arx/models/model_coef") / f"{MODEL_NAME}.csv"
-PRED_CSV_OUT   = Path("arx/models/pred_csv") / f"{MODEL_NAME}.csv"
+MODEL_OUT      = Path("arx/models/model_meta") / f"{MODEL_NAME_OUT}.meta.joblib"
+COEF_CSV_OUT   = Path("arx/models/model_coef") / f"{MODEL_NAME_OUT}.csv"
+PRED_CSV_OUT   = Path("arx/models/pred_csv") / f"{MODEL_NAME_OUT}.csv"
 
 # train/test split (chronological)
 TRAIN_FRAC     = 0.7
 
 # RidgeCV hyperparameters
+alpha = 0
 ALPHAS         = np.logspace(-4, 4, 20)
 TS_SPLITS      = 5
 SEED           = 0  # for any stochastic parts (not critical here)
@@ -115,12 +116,13 @@ def main() -> None:
     # ---------- fit RidgeCV on (X_z → y_z) ----------
     print(f"[fit] Fitting RidgeCV with {len(ALPHAS)} alphas, {TS_SPLITS} time-series splits")
     tscv = TimeSeriesSplit(n_splits=TS_SPLITS)
-    model = RidgeCV(
-        alphas=ALPHAS,
-        cv=tscv,
-        scoring="neg_mean_squared_error",
-        gcv_mode="svd",
-    )
+    # model = RidgeCV(
+    #     alphas=ALPHAS,
+    #     cv=tscv,
+    #     scoring="neg_mean_squared_error",
+    #     gcv_mode="svd",
+    # )
+    model = Ridge(alpha=alpha, random_state=SEED)
     model.fit(X_tr_z, y_tr_z)
     print(f"[fit] Best alpha: {getattr(model, 'alpha_', None)}")
 
@@ -139,10 +141,24 @@ def main() -> None:
     print(f"[metrics] Train RMSE = {tr_rmse:.6f} (physical units)")
     print(f"[metrics] Test  RMSE = {te_rmse:.6f} (physical units)")
 
+    # ---------- analyze AR poles ----------
+    ar_terms = []
+    for name, coef in zip(X_cols_final, model.coef_):   # <-- IMPORTANT: X_cols_final
+        if "y_filt_lag" in name:
+            lag = int(name.split("lag")[-1])
+            ar_terms.append((lag, coef))
+
+    ar_terms.sort(key=lambda x: x[0])                  # <-- IMPORTANT: sort by lag
+    ar_coefs = np.array([c for _, c in ar_terms], dtype=float)
+
+    ar_poly = np.r_[1.0, -ar_coefs]                    # 1 - a1 z^-1 - a2 z^-2 - ...
+    poles = np.roots(ar_poly)
+    print("AR coefficients (sorted):", ar_coefs)
+    print("AR poles:", poles)
     # ---------- save model bundle ----------
     ensure_parent(MODEL_OUT)
     bundle = {
-        "model_name": MODEL_NAME,
+        "model_name": MODEL_NAME_OUT,
         "y_col": y_col,
         "X_cols": X_cols_final,
         "meta_prep": meta,
@@ -184,6 +200,7 @@ def main() -> None:
 
     ensure_parent(PRED_CSV_OUT)
     pred_df.to_csv(PRED_CSV_OUT)
+    
     print(f"[save] Test predictions -> {PRED_CSV_OUT}")
 
 

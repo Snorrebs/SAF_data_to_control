@@ -10,8 +10,8 @@ from run_simulation_online_VRFT.closed_loop.closed_loop_sim import run_closed_lo
 
 def main():
     # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_online_VRFT/models/arx_el1res_5321_07.meta.joblib")
-    HIST_CSV   = Path("run_simulation_online_VRFT/init_data/arx_el1res_5321_07.csv")
+    MODEL_PATH = Path("run_simulation_online_VRFT/models/arx_el1res_2321_07.meta.joblib")
+    HIST_CSV   = Path("run_simulation_online_VRFT/init_data/arx_el1res_2321_07.csv")
     OUT_CSV    = Path("run_simulation_online_VRFT/closed_loop/closed_loop_sim1.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
@@ -28,10 +28,10 @@ def main():
 
     # ---- build reference trajectory ----
     N = 200
-    r = np.full(N, 1.1)  # setpoint in mOhm
+    r = np.full(N, 1.2)  # setpoint in mOhm
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp=0.02, Ki=0.00000, Kd=-0.00)  # tune
+    pid = PIDParams(Kp=0.00, Ki=0.00000, Kd=-0.00)  # tune
     Ts = 1.0
     u_min, u_max = -5, 5
     du_max = 0.01

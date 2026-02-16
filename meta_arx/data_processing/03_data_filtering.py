@@ -6,7 +6,7 @@ from scipy.signal import butter, filtfilt
 
 # ---------- CONFIG ----------
 IN_CSV  = Path("meta_arx/data/1s_data_from_plant/07_24.csv")
-OUT_CSV = Path("meta_arx/data/filt_data/07_24_filt.csv")
+OUT_CSV = Path("meta_arx/data/filt_data/07_24_filt_01.csv")
 
 # Target signal for ARX: electrode 1 resistance (mΩ)
 TARGET_COL = "El1_Resistance_mOhm"
@@ -21,7 +21,7 @@ SPEED_COL = "El1_dpos_mps"
 FS = 1.0          # sampling rate [Hz] (1 s data → 1 Hz)
 ORDER_TGT  = 2    # order for target
 ORDER_EXOG = 4    # order for exogenous
-FC_HZ = 0.05      # low-pass cutoff frequency [Hz] (≈ 20 s time scale)
+FC_HZ = 0.1      # low-pass cutoff frequency [Hz] (≈ 20 s time scale)
 
 # Whether to automatically convert electrode positions from cm → m if needed
 FORCE_ELECTRODE_CM_TO_M = True

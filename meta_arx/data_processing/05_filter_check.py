@@ -17,15 +17,15 @@ CSV_PATH = Path("meta_arx/data/filt_data/07_24_filt.csv")
 
 # Time window (set to None to use full range)
 START = "2022-07-06 22:01:00+00:00"   # or None
-END   = "2022-07-06 23:00:00+00:00"   # or None
+END   = "2022-07-06 22:20:00+00:00"   # or None
 
 # Variables to plot: (raw_column_name, filtered_column_name)
 VARS = [
-    ("El1_Resistance_mOhm", "El1_Resistance_mOhm_filt"),
+    # ("El1_Resistance_mOhm", "El1_Resistance_mOhm_filt"),
     # ("Tot_Resistance_mOhm", "Tot_Resistance_mOhm_filt"),
     # ("El1_dpos_mps", "El1_dpos_mps_filt"),
     # ("El1_kA", "El1_kA_filt"),
-    # ("RMS_V_transformer", "RMS_V_transformer_filt"),
+    ("RMS_V_transformer", "RMS_V_transformer_filt"),
 ]
 # Just comment/uncomment lines in VARS to choose which signals to see.
 # -----------------------------------------
@@ -56,10 +56,10 @@ def main():
             print(f"[WARN] filtered column '{filt_col}' not in DataFrame, skipping.")
             continue
 
-        plt.figure(figsize=(12, 4))
-        plt.plot(df.index, df[raw_col], label=f"{raw_col} (raw)", alpha=0.5)
-        plt.plot(df.index, df[filt_col], label=f"{filt_col} (filtered)", linewidth=1.8)
-        plt.title(f"{raw_col} – raw vs filtered")
+        plt.figure(figsize=(10, 4))
+        plt.plot(df.index, df[raw_col], label=f"{raw_col} (raw)", alpha=0.8)
+        # plt.plot(df.index, df[filt_col], label=f"{filt_col} (filtered)", linewidth=1.8)
+        plt.title(f"{raw_col} – raw signal")
         plt.xlabel("Time")
         plt.ylabel(raw_col)
         plt.grid(True, alpha=0.3)
