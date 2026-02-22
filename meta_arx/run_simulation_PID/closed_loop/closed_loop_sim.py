@@ -34,7 +34,7 @@ def run_closed_loop(
 
     # initial conditions from state
     y[0] = state.current_y()
-    u_prev = state.current_u_El2()
+    u_prev = state.current_u_el1()
 
     integral = 0.0
     prev_pred = y[0]

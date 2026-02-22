@@ -1,4 +1,4 @@
-#python3 -m run_simulation.scripts.run_closed_loop
+#python3 -m run_simulation_PID.scripts.run_closed_loop
 
 import numpy as np
 import pandas as pd
@@ -10,9 +10,9 @@ from run_simulation_PID.closed_loop.closed_loop_sim import run_closed_loop, PIDP
 
 def main():
     # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_PID/models/arx_mar_stable.joblib")
-    HIST_CSV   = Path("run_simulation/init_data/model_arx_1_5_5.csv")
-    OUT_CSV    = Path("run_simulation/closed_loop/closed_loop_sim.csv")
+    MODEL_PATH = Path("run_simulation_PID/models/arx_el1res_2321_07.meta.joblib")
+    HIST_CSV   = Path("run_simulation_PID/init_data/arx_el1res_2321_07.csv")
+    OUT_CSV    = Path("run_simulation_PID/history/closed_loop_sim.csv")
 
     assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
     assert HIST_CSV.exists(), f"Missing history CSV: {HIST_CSV}"
@@ -22,19 +22,19 @@ def main():
     state = load_initial_state(str(HIST_CSV), bundle)
 
     # initial electrode position for logging
-    u0 = state.current_u_El2()
+    u0 = state.current_u_el1()
 
 
 
     # ---- build reference trajectory ----
-    N = 1000
+    N = 200
     r = np.full(N, 1.1) 
 
     # ---- PID params + limits ----
-    pid = PIDParams(Kp=0.0001, Ki=0, Kd=0.1)  # tune
+    pid = PIDParams(Kp= 0.002, Ki=0, Kd=0.0)  # tune
     Ts = 1.0
-    u_min, u_max = 0, 3.8
-    du_max = 1
+    u_min, u_max = -5, 5
+    du_max = 0.001
 
     # ---- run closed-loop sim ----
     y, u, e = run_closed_loop(
