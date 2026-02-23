@@ -61,7 +61,7 @@ class ArxState:
             new = np.empty_like(old)
             new[1:] = old[:-1]
 
-            if base == "El2_pos_m_filt":
+            if base == "El1_dpos_mps_filt":
                 new[0] = u_new
             elif base == "y_raw":
                 new[0] = y_new
@@ -70,8 +70,8 @@ class ArxState:
 
             self.row.loc[cols] = new
 
-        if "El2_pos_m_filt" in self.row.index:
-            self.row["El2_pos_m_filt"] = u_new
+        if "El1_dpos_mps_filt" in self.row.index:
+            self.row["El1_dpos_mps_filt"] = u_new
         if "y_target" in self.row.index:
             self.row["y_target"] = y_new
 

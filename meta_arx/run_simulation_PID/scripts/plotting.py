@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim.csv")
+CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim1.csv")
 
 
 def main() -> None:
@@ -26,7 +26,7 @@ def main() -> None:
     axs[0].legend()
     axs[0].grid(True, alpha=0.3)
 
-    axs[1].plot(t, u, label="El2 position", color="C1", lw=2)
+    axs[1].plot(t, u, label="El1 position", color="C1", lw=2)
     axs[1].set_ylabel("Electrode Position [m]")
     axs[1].legend()
     axs[1].grid(True, alpha=0.3)

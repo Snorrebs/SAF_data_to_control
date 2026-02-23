@@ -11,7 +11,7 @@ from run_simulation_PID.closed_loop.controller import PIDController, PIDParams
 
 MODEL_PATH = Path("run_simulation_PID/models/arx_el1res_2321_07.meta.joblib")
 HIST_CSV = Path("run_simulation_PID/init_data/arx_el1res_2321_07.csv")
-OUT_CSV = Path("run_simulation_PID/history/closed_loop_sim.csv")
+OUT_CSV = Path("run_simulation_PID/history/closed_loop_sim1.csv")
 
 
 def main() -> None:
@@ -19,24 +19,25 @@ def main() -> None:
     state = load_initial_state(str(HIST_CSV), bundle)
     u0 = state.current_u()
 
-    n_steps = 200
-    reference = np.full(n_steps, 1.1)
+    n_steps = 1000
+    reference = np.full(n_steps, 1.02)
 
+    #Init controller
     controller = PIDController(
-        params=PIDParams(Kp=0.002, Ki=0.0, Kd=0.0),
+        params=PIDParams(Kp=-0.2, Ki=0.0, Kd=0.2),
         Ts=1.0,
         u_min=-5,
         u_max=5,
-        du_max=0.001,
+        du_max=0.1,
     )
-
+    # Run closed-loop simulation with controller in the loop
     y, u, e = run_closed_loop(
         model=bundle,
         state=state,
         reference=reference,
         controller=controller,
     )
-
+    # Save results to CSV for VRFT tuning
     t = np.arange(len(y), dtype=float) * controller.Ts
     out = pd.DataFrame(
         {
