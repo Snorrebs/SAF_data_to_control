@@ -1,76 +1,55 @@
-#python3 -m run_simulation_PID.scripts.run_closed_loop
+# python -m run_simulation_PID.scripts.run_closed_loop
+
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from joblib import load
 
 from run_simulation_PID.closed_loop.arx_state import load_arx_bundle, load_initial_state
-from run_simulation_PID.closed_loop.closed_loop_sim import run_closed_loop, PIDParams
+from run_simulation_PID.closed_loop.closed_loop_sim import run_closed_loop
+from run_simulation_PID.closed_loop.controller import PIDController, PIDParams
 
-def main():
-    # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_PID/models/arx_el1res_2321_07.meta.joblib")
-    HIST_CSV   = Path("run_simulation_PID/init_data/arx_el1res_2321_07.csv")
-    OUT_CSV    = Path("run_simulation_PID/history/closed_loop_sim.csv")
+MODEL_PATH = Path("run_simulation_PID/models/arx_el1res_2321_07.meta.joblib")
+HIST_CSV = Path("run_simulation_PID/init_data/arx_el1res_2321_07.csv")
+OUT_CSV = Path("run_simulation_PID/history/closed_loop_sim.csv")
 
-    assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
-    assert HIST_CSV.exists(), f"Missing history CSV: {HIST_CSV}"
 
-    # ---- load model + initial ARX state ----
+def main() -> None:
     bundle = load_arx_bundle(str(MODEL_PATH))
     state = load_initial_state(str(HIST_CSV), bundle)
+    u0 = state.current_u()
 
-    # initial electrode position for logging
-    u0 = state.current_u_el1()
+    n_steps = 200
+    reference = np.full(n_steps, 1.1)
 
-
-
-    # ---- build reference trajectory ----
-    N = 200
-    r = np.full(N, 1.1) 
-
-    # ---- PID params + limits ----
-    pid = PIDParams(Kp= 0.002, Ki=0, Kd=0.0)  # tune
-    Ts = 1.0
-    u_min, u_max = -5, 5
-    du_max = 0.001
-
-    # ---- run closed-loop sim ----
-    y, u, e = run_closed_loop(
-        model=bundle,        
-        state=state,
-        r=r,
-        pid=pid,
-        Ts=Ts,
-        u_min=u_min,
-        u_max=u_max,
-        du_max=du_max,
+    controller = PIDController(
+        params=PIDParams(Kp=0.002, Ki=0.0, Kd=0.0),
+        Ts=1.0,
+        u_min=-5,
+        u_max=5,
+        du_max=0.001,
     )
 
-    # ---- save to CSV for plotting ----
-    t = np.arange(len(y)) * Ts  # y has length N+1
+    y, u, e = run_closed_loop(
+        model=bundle,
+        state=state,
+        reference=reference,
+        controller=controller,
+    )
 
-    # Build u log with same length as y: [u0, u[0], u[1], ..., u[N-1]]
-    u_log = np.append([u0], u)  # length N+1
-
-    df_out = pd.DataFrame(
+    t = np.arange(len(y), dtype=float) * controller.Ts
+    out = pd.DataFrame(
         {
             "t_s": t,
             "y_pred_mOhm": y,
-            "u_El2_pos_m": u_log,
+            "u_cmd": np.append([u0], u),
             "e": np.append(e, np.nan),
-            "r": np.append(r, np.nan),
+            "r": np.append(reference, np.nan),
         }
     )
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    df_out.to_csv(OUT_CSV, index=False)
+    out.to_csv(OUT_CSV, index=False)
     print(f"[save] {OUT_CSV}")
-    # bundle = load("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
-    # print(bundle["exog_cols"])
-
-    import run_simulation_PID.scripts.plotting as plotting
-    plotting.main()
 
 
 if __name__ == "__main__":
