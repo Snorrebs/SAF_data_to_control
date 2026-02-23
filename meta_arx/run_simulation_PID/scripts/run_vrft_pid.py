@@ -8,7 +8,7 @@ Usage:
 """
 
 from pathlib import Path
-from run_simulation_PID.vrft.vrft_pid import vrft_pid_from_csv_filtered
+from run_simulation_PID.scripts.vrft_pid import vrft_pid_from_csv_filtered, PIDParams
 
 # Path to the CSV produced by closed-loop simulation
 CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim.csv")
