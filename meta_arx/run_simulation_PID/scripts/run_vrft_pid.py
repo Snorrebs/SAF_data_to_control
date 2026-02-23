@@ -8,14 +8,14 @@ Usage:
 """
 
 from pathlib import Path
-from run_simulation_offline_VRFT.vrft.vrft_pid import vrft_pid_from_csv_filtered, PIDParams
+from run_simulation_PID.vrft.vrft_pid import vrft_pid_from_csv_filtered
 
 # Path to the CSV produced by closed-loop simulation
 CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim.csv")
 
 # Column names in that CSV
 Y_COL = "y_pred_mOhm"   # output (resistance)
-U_COL = "u_El2_pos_m"   # input (electrode position command)
+U_COL = "u_cmd"   # input (electrode position command)
 
 # Sampling times
 TS = 1.0  # [s]
@@ -31,7 +31,7 @@ def main() -> None:
     if not CSV_PATH.exists():
         raise FileNotFoundError(f"CSV not found: {CSV_PATH}")
 
-    pid: PIDParams = vrft_pid_from_csv_filtered(
+    pid = vrft_pid_from_csv_filtered(
         csv_path=str(CSV_PATH),
         y_col=Y_COL,
         u_col=U_COL,

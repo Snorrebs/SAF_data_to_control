@@ -6,8 +6,10 @@ dependencies:
   - numpy
   - pandas
   - scikit-learn
+  - scipy
   - openpyxl
   - matplotlib
+  - joblib
   - pytest
   - black
   - ruff
