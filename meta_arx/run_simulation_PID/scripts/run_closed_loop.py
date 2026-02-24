@@ -1,76 +1,92 @@
-#python3 -m run_simulation.scripts.run_closed_loop
+# python -m run_simulation_PID.scripts.run_closed_loop \
+#     --kp -0.2 --ki 0.0 --kd 0.2 \
+#     --ref_csv run_simulation_PID/init_data/reference.csv \
+#     --out_csv run_simulation_PID/history/closed_loop_sim1.csv
+
+from pathlib import Path
+import argparse
 
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from joblib import load
 
 from run_simulation_PID.closed_loop.arx_state import load_arx_bundle, load_initial_state
-from run_simulation_PID.closed_loop.closed_loop_sim import run_closed_loop, PIDParams
-
-def main():
-    # ---- paths (adjust to your repo) ----
-    MODEL_PATH = Path("run_simulation_PID/models/arx_mar_stable.joblib")
-    HIST_CSV   = Path("run_simulation/init_data/model_arx_1_5_5.csv")
-    OUT_CSV    = Path("run_simulation/closed_loop/closed_loop_sim.csv")
-
-    assert MODEL_PATH.exists(), f"Missing model: {MODEL_PATH}"
-    assert HIST_CSV.exists(), f"Missing history CSV: {HIST_CSV}"
-
-    # ---- load model + initial ARX state ----
-    bundle = load_arx_bundle(str(MODEL_PATH))
-    state = load_initial_state(str(HIST_CSV), bundle)
-
-    # initial electrode position for logging
-    u0 = state.current_u_El2()
+from run_simulation_PID.closed_loop.closed_loop_sim import run_closed_loop
+from run_simulation_PID.closed_loop.controller import PIDController, PIDParams
 
 
+MODEL_PATH = Path("run_simulation_PID/models/arx_el1res_2321_07.meta.joblib")
+HIST_CSV = Path("run_simulation_PID/init_data/arx_el1res_2321_07.csv")
 
-    # ---- build reference trajectory ----
-    N = 1000
-    r = np.full(N, 1.1) 
 
-    # ---- PID params + limits ----
-    pid = PIDParams(Kp=0.0001, Ki=0, Kd=0.1)  # tune
-    Ts = 1.0
-    u_min, u_max = 0, 3.8
-    du_max = 1
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run closed-loop ARX + PID simulation")
 
-    # ---- run closed-loop sim ----
-    y, u, e = run_closed_loop(
-        model=bundle,        
-        state=state,
-        r=r,
-        pid=pid,
-        Ts=Ts,
-        u_min=u_min,
-        u_max=u_max,
-        du_max=du_max,
+    parser.add_argument("--kp", type=float, required=True)
+    parser.add_argument("--ki", type=float, required=True)
+    parser.add_argument("--kd", type=float, required=True)
+
+    parser.add_argument(
+        "--ref_csv",
+        type=str,
+        required=True,
     )
 
-    # ---- save to CSV for plotting ----
-    t = np.arange(len(y)) * Ts  # y has length N+1
+    parser.add_argument(
+        "--out_csv",
+        type=str,
+        default="run_simulation_PID/history/closed_loop_sim.csv",
+    )
 
-    # Build u log with same length as y: [u0, u[0], u[1], ..., u[N-1]]
-    u_log = np.append([u0], u)  # length N+1
+    return parser.parse_args()
 
-    df_out = pd.DataFrame(
+
+def load_reference(path: str) -> np.ndarray:
+    df = pd.read_csv(path)
+
+    return df["r"].values
+
+
+def main() -> None:
+    args = parse_args()
+
+    bundle = load_arx_bundle(str(MODEL_PATH))
+    state = load_initial_state(str(HIST_CSV), bundle)
+    u0 = state.current_u()
+
+    reference = load_reference(args.ref_csv)
+
+    controller = PIDController(
+        params=PIDParams(Kp=args.kp, Ki=args.ki, Kd=args.kd),
+        Ts=1.0,
+        u_min=-5,
+        u_max=5,
+        du_max=0.01,
+    )
+
+    y, u, e = run_closed_loop(
+        model=bundle,
+        state=state,
+        reference=reference,
+        controller=controller,
+    )
+
+    t = np.arange(len(y), dtype=float) * controller.Ts
+
+    out = pd.DataFrame(
         {
             "t_s": t,
             "y_pred_mOhm": y,
-            "u_El2_pos_m": u_log,
+            "u_cmd": np.append([u0], u),
             "e": np.append(e, np.nan),
-            "r": np.append(r, np.nan),
+            "r": np.append(reference, np.nan),
         }
     )
-    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    df_out.to_csv(OUT_CSV, index=False)
-    print(f"[save] {OUT_CSV}")
-    # bundle = load("run_simulation/models/arx_linear_ridge_stable_yonly.joblib")
-    # print(bundle["exog_cols"])
 
-    import run_simulation_PID.scripts.plotting as plotting
-    plotting.main()
+    out_path = Path(args.out_csv)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(out_path, index=False)
+
+    print(f"[save] {out_path}")
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ class PIDController:
             u_prev
             + self.params.Kp * error
             + self.params.Ki * self._integral
-            - self.params.Kd * derivative
+            + self.params.Kd * derivative
         )
 
         if self.du_max is not None:

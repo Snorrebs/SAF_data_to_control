@@ -3,23 +3,19 @@
 ## 1. Install Conda
 Install **Miniconda**.
 
-## 2. Create environment
-```bash
-conda create -n ENVIRONMENT_NAME python=3.11
-conda activate ENVIRONMENT_NAME
-```
-Change ENVIRONMENT_NAME to desired name
+## 2. Create environment from file
+From the repository root:
 
-## 3. Install Packages
 ```bash
-conda install numpy pandas scipy scikit-learn matplotlib joblib
+conda env create -f environment.yml
+conda activate plsr-metamodel
 ```
 
-## 4. Verify
+## 3. Verify
 ```bash
 python -c "import numpy, pandas, scipy, sklearn, matplotlib, joblib"
 ```
-Should not give error!
+Should not give error.
 
-## 5. Run Project
-Look at `SAF_data_to_control/readme_VRFT_simulation.md` to run the simulator and/or the VRFT.
+## 4. Run Project
+See `readme_VRFT_simulation.md` for the simulation and VRFT workflow.
