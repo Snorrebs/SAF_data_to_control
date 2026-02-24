@@ -1,7 +1,7 @@
-# python -m run_simulation_PID.scripts.run_closed_loop \
-#     --kp -0.2 --ki 0.0 --kd 0.2 \
-#     --ref_csv run_simulation_PID/init_data/reference.csv \
-#     --out_csv run_simulation_PID/history/closed_loop_sim1.csv
+""" python -m run_simulation_PID.scripts.run_closed_loop
+ --PID_params_csv run_simulation_PID/init_data/PID_params.csv 
+ --ref_csv run_simulation_PID/init_data/reference.csv     
+ --out_csv run_simulation_PID/history/closed_loop_sim1.csv"""
 
 from pathlib import Path
 import argparse
@@ -21,9 +21,11 @@ HIST_CSV = Path("run_simulation_PID/init_data/arx_el1res_2321_07.csv")
 def parse_args():
     parser = argparse.ArgumentParser(description="Run closed-loop ARX + PID simulation")
 
-    parser.add_argument("--kp", type=float, required=True)
-    parser.add_argument("--ki", type=float, required=True)
-    parser.add_argument("--kd", type=float, required=True)
+    parser.add_argument(
+        "--PID_params_csv",
+        type=str,        
+        default="run_simulation_PID/init_data/PID_params.csv",
+    )
 
     parser.add_argument(
         "--ref_csv",
@@ -45,6 +47,10 @@ def load_reference(path: str) -> np.ndarray:
 
     return df["r"].values
 
+def load_PID_params(path: str) -> PIDParams:
+    df = pd.read_csv(path)
+
+    return PIDParams(Kp=df["Kp"].iloc[0], Ki=df["Ki"].iloc[0], Kd=df["Kd"].iloc[0])
 
 def main() -> None:
     args = parse_args()
@@ -54,9 +60,10 @@ def main() -> None:
     u0 = state.current_u()
 
     reference = load_reference(args.ref_csv)
-
+    controller_params = load_PID_params(args.PID_params_csv)
+    print(f"Loaded PID parameters: {controller_params}")
     controller = PIDController(
-        params=PIDParams(Kp=args.kp, Ki=args.ki, Kd=args.kd),
+        controller_params,
         Ts=1.0,
         u_min=-5,
         u_max=5,
