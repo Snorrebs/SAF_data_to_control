@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim1.csv")
+CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim.csv")
 
 
 def main() -> None:
