@@ -116,7 +116,7 @@ def main() -> None:
     state = load_initial_state(args.hist_csv, bundle)
 
     ref = load_reference(args.ref_csv)
-
+    print(f"Loaded reference with shape {ref.shape} from {args.ref_csv}")
     pid_params = load_PID_params(args.PID_params_csv)
     print(f"Loaded PID parameters: {pid_params}")
 
@@ -137,7 +137,7 @@ def main() -> None:
         reference=ref,
         controllers=controllers,
     )
-
+    print(f"Closed-loop simulation completed. y shape: {y.shape}, u shape: {u.shape}, e shape: {e.shape}")
     t = np.arange(len(y), dtype=float) * controllers[0].Ts
 
     out = pd.DataFrame(
@@ -146,6 +146,9 @@ def main() -> None:
             "y1": y[:, 0],
             "y2": y[:, 1],
             "y3": y[:, 2],
+            "r1": np.r_[np.nan, ref[:, 0]],
+            "r2": np.r_[np.nan, ref[:, 1]],
+            "r3": np.r_[np.nan, ref[:, 2]],
             "u1": np.r_[np.nan, u[:, 0]],
             "u2": np.r_[np.nan, u[:, 1]],
             "u3": np.r_[np.nan, u[:, 2]],
