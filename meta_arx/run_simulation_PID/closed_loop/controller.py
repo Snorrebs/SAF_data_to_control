@@ -16,9 +16,9 @@ class PIDParams:
 class PIDController:
     params: PIDParams
     Ts: float = 1.0
-    u_min: float | None = None
-    u_max: float | None = None
-    du_max: float | None = None
+    u_min: float = 10
+    u_max: float = 200
+    du_max: float = 1
 
     def __post_init__(self) -> None:
         self._integral = 0.0
