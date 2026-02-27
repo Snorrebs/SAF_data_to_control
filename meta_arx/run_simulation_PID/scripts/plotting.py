@@ -32,7 +32,7 @@ def main() -> None:
     # Currents: prefer new naming, fallback to older single-output logs
     if all(c in df.columns for c in ["y1", "y2", "y3"]):
         y = df[["y1", "y2", "y3"]]
-        y_label = "Current [kA]"
+        y_label = "Current [kA]/Resistance [mOhm]"
         y_title = "Electrode currents (pred)"
     else:
         raise KeyError("Could not find current/resistance columns to plot.")

@@ -11,8 +11,8 @@ from sklearn.preprocessing import StandardScaler
 
 # --------------------------- CONFIG ---------------------------
 
-MODEL_NAME_IN  = "varx_curr_2321_07"
-MODEL_NAME_OUT = "varx_curr_2321_07_ridge"
+MODEL_NAME_IN  = "varx_res_2321_07"
+MODEL_NAME_OUT = "varx_res_2321_07_ridge"
 
 META_PATH = Path("arx/arx_prep_meta") / f"{MODEL_NAME_IN}.meta.joblib"
 IN_CSV    = Path("arx/arx_prep_data") / f"{MODEL_NAME_IN}.csv"

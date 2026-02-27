@@ -24,14 +24,14 @@ import pandas as pd
 import joblib
 
 # --------------------------- CONFIG ---------------------------
-IN_CSV    = Path("meta_arx/data/filt_data/07_24_filt_varx_current.csv")
-OUT_CSV   = Path("meta_arx/arx/arx_prep_data/varx_curr_2321_07.csv")
-META_PATH = Path("meta_arx/arx/arx_prep_meta/varx_curr_2321_07.meta.joblib")
+IN_CSV    = Path("meta_arx/data/filt_data/07_24_filt_varx_res.csv")
+OUT_CSV   = Path("meta_arx/arx/arx_prep_data/varx_res_2321_07.csv")
+META_PATH = Path("meta_arx/arx/arx_prep_meta/varx_res_2321_07.meta.joblib")
 
 TS_COL = "timestamp"
 
 # Targets (filtered currents)
-Y_FILT_COLS = ["El1_kA_filt", "El2_kA_filt", "El3_kA_filt"]
+Y_FILT_COLS = ["El1_Resistance_mOhm_filt", "El2_Resistance_mOhm_filt", "El3_Resistance_mOhm_filt"]
 
 # Inputs (filtered)
 POS_FILT_COLS = ["El1_pos_m_filt", "El2_pos_m_filt", "El3_pos_m_filt"]
@@ -39,11 +39,7 @@ V_FILT_COLS   = ["UL1N_V_filt", "UL2N_V_filt", "UL3N_V_filt"]
 
 # Optional exogenous (filtered)
 USE_RESISTANCE = True
-R_FILT_COLS = [
-    "El1_Resistance_mOhm_filt",
-    "El2_Resistance_mOhm_filt",
-    "El3_Resistance_mOhm_filt",
-]
+I_FILT_COLS = ["El1_kA", "El2_kA", "El3_kA"]
 USE_TOT_RESISTANCE = True
 TOT_R_FILT_COL = "Tot_Resistance_mOhm_filt"
 
@@ -87,7 +83,7 @@ def main() -> None:
     _require_cols(df, V_FILT_COLS, "voltage")
 
     if USE_RESISTANCE:
-        _require_cols(df, R_FILT_COLS, "resistance")
+        _require_cols(df, I_FILT_COLS, "resistance")
         if USE_TOT_RESISTANCE and TOT_R_FILT_COL not in df.columns:
             print(f"[warn] {TOT_R_FILT_COL} not found; disabling Tot resistance.")
             use_tot_r = False
@@ -130,7 +126,7 @@ def main() -> None:
 
     # 4) resistances (optional)
     if USE_RESISTANCE:
-        for c in R_FILT_COLS:
+        for c in I_FILT_COLS:
             s = df[c].astype("float64")
             for L in range(1, S_R + 1):
                 lag_cols[f"{c}_lag{L}"] = s.shift(L)
@@ -172,7 +168,7 @@ def main() -> None:
                 "y_filt_cols": Y_FILT_COLS,
                 "pos_filt_cols": POS_FILT_COLS,
                 "v_filt_cols": V_FILT_COLS,
-                "r_filt_cols": (R_FILT_COLS if USE_RESISTANCE else []),
+                "i_filt_cols": (I_FILT_COLS if USE_RESISTANCE else []),
                 "tot_r_filt_col": (TOT_R_FILT_COL if (USE_RESISTANCE and use_tot_r) else None),
             },
             "use_resistance": USE_RESISTANCE,

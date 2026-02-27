@@ -22,8 +22,8 @@ from run_simulation_PID.closed_loop.controller import PIDController, PIDParams
 
 
 # Defaults for VARX-current
-MODEL_PATH = Path("run_simulation_PID/models/varx_curr_2321_07_ridge.meta.joblib")
-HIST_CSV = Path("run_simulation_PID/init_data/varx_curr_2321_07.csv")
+MODEL_PATH = Path("run_simulation_PID/models/varx_res_2321_07_ridge.meta.joblib")
+HIST_CSV = Path("run_simulation_PID/init_data/varx_res_2321_07.csv")
 
 
 def parse_args():

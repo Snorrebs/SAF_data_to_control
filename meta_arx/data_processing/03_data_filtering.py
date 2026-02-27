@@ -6,19 +6,19 @@ from scipy.signal import butter, filtfilt
 
 # ---------- CONFIG ----------
 IN_CSV  = Path("meta_arx/data/1s_data_from_plant/07_24.csv")
-OUT_CSV = Path("meta_arx/data/filt_data/07_24_filt_varx_current.csv")
+OUT_CSV = Path("meta_arx/data/filt_data/07_24_filt_varx_res.csv")
 
 TS_COL = "timestamp"
 
 # VARX-current targets (also used as AR lags later)
-Y_COLS = ["El1_kA", "El2_kA", "El3_kA"]
+Y_COLS =["El1_Resistance_mOhm", "El2_Resistance_mOhm", "El3_Resistance_mOhm"]
 
 # Inputs
 POS_COLS = ["El1_pos_m", "El2_pos_m", "El3_pos_m"]
 V_COLS   = ["UL1N_V", "UL2N_V", "UL3N_V"]
 
 # Optional impedance proxies (recommended but you can omit later in X_cols)
-R_COLS = ["El1_Resistance_mOhm", "El2_Resistance_mOhm", "El3_Resistance_mOhm"]
+R_COLS = ["El1_kA", "El2_kA", "El3_kA"]
 TOT_R_COL = "Tot_Resistance_mOhm"
 
 # Butterworth params (1 Hz sampling)
