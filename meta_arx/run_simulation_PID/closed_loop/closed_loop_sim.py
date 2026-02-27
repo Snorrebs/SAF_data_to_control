@@ -3,14 +3,14 @@ from __future__ import annotations
 import numpy as np
 
 from .arx_state import ArxState
-from .controller import PIDController
+from run_simulation_PID.closed_loop.controller_api import Controller
 
 
 def run_closed_loop(
     model: dict,
     state: ArxState,
     reference: np.ndarray,
-    controller: PIDController,
+    controller: Controller,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     reference = np.asarray(reference, dtype=float)
     n = len(reference)
