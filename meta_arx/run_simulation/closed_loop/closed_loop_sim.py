@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from .arx_state import ArxState
-from run_simulation_PID.closed_loop.controller_api import Controller
+from .controller_api import Controller
 
 
 def run_closed_loop(

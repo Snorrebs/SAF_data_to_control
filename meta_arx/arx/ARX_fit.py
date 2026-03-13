@@ -11,8 +11,8 @@ from sklearn.preprocessing import StandardScaler
 
 # --------------------------- CONFIG ---------------------------
 
-MODEL_NAME_IN     = "arx_el1res_5543_07"
-MODEL_NAME_OUT = "arx_el1res_5543_07_no_ridge"
+MODEL_NAME_IN     = "arx_el1res_0321_07_pos"
+MODEL_NAME_OUT = "arx_el1res_0321_07_pos"
 META_PATH      = Path("arx/arx_prep_meta") / f"{MODEL_NAME_IN}.meta.joblib"
 IN_CSV         = Path("arx/arx_prep_data") / f"{MODEL_NAME_IN}.csv"
 
@@ -24,7 +24,7 @@ PRED_CSV_OUT   = Path("arx/models/pred_csv") / f"{MODEL_NAME_OUT}.csv"
 TRAIN_FRAC     = 0.7
 
 # RidgeCV hyperparameters
-alpha = 0
+alpha = 0.1
 ALPHAS         = np.logspace(-4, 4, 20)
 TS_SPLITS      = 5
 SEED           = 0  # for any stochastic parts (not critical here)
@@ -147,6 +147,7 @@ def main() -> None:
         if "y_filt_lag" in name:
             lag = int(name.split("lag")[-1])
             ar_terms.append((lag, coef))
+            
 
     ar_terms.sort(key=lambda x: x[0])                  # <-- IMPORTANT: sort by lag
     ar_coefs = np.array([c for _, c in ar_terms], dtype=float)
@@ -155,6 +156,16 @@ def main() -> None:
     poles = np.roots(ar_poly)
     print("AR coefficients (sorted):", ar_coefs)
     print("AR poles:", poles)
+    coef = model.coef_
+    print(coef)
+    u_idx = np.array([("El1_pos_m_lag" in c) for c in X_cols_final], dtype=bool)
+    y_idx = np.array([("y_filt_lag" in c) for c in X_cols_final], dtype=bool)
+
+    u_norm = float(np.linalg.norm(coef[u_idx])) if u_idx.any() else 0.0
+    y_norm = float(np.linalg.norm(coef[y_idx])) if y_idx.any() else 0.0
+    all_norm = float(np.linalg.norm(coef))
+
+    print(f"[coef] ||coef_u|| = {u_norm:.4f}, ||coef_y|| = {y_norm:.4f}, ||coef_all|| = {all_norm:.4f}")
     # ---------- save model bundle ----------
     ensure_parent(MODEL_OUT)
     bundle = {

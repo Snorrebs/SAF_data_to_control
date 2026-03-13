@@ -29,23 +29,23 @@ import numpy as np
 import joblib
 
 # --------------------------- CONFIG ---------------------------
-IN_CSV    = Path("meta_arx/data/filt_data/07_24_filt.csv")
-OUT_CSV   = Path("meta_arx/arx/arx_prep_data/arx_el1res_15543_07.csv")
-META_PATH = Path("meta_arx/arx/arx_prep_meta/arx_el1res_15543_07.meta.joblib")
+IN_CSV    = Path("meta_arx/data/filt_data/07_24_filt_pos_01.csv")
+OUT_CSV   = Path("meta_arx/arx/arx_prep_data/arx_el1res_2321_07_pos.csv")
+META_PATH = Path("meta_arx/arx/arx_prep_meta/arx_el1res_2321_07_pos.meta.joblib")
 
 # Target (filtered electrode-1 resistance in mΩ)
 Y_FILT_COL = "El1_Resistance_mOhm_filt"
 
 # Filtered input/disturbance signals produced by script 2
-U_FILT_COL    = "El1_dpos_mps_filt"       # manipulated variable (velocity)
+U_FILT_COL    = "El1_pos_m"       # manipulated variable (velocity)
 I1_FILT_COL   = "El1_kA_filt"             # disturbance current
 VSEC_FILT_COL = "RMS_V_transformer_filt"  # disturbance voltage
 
 # Lags matching the chosen ARX structure
-MAX_AR_LAG   = 15   # y(t-1..2)
-MAX_U_LAG    = 5   # u(t-1..3)
-MAX_I1_LAG   = 4   # I1(t-1..2)
-MAX_VSEC_LAG = 3   # Vsec(t-1)
+MAX_AR_LAG   = 1  # y(t-1..2)
+MAX_U_LAG    = 3   # u(t-1..3)
+MAX_I1_LAG   = 2   # I1(t-1..2)
+MAX_VSEC_LAG = 1   # Vsec(t-1)
 
 # Forecast horizon (H = 0 → predict y(t))
 H = 0

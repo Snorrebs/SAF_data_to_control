@@ -2,28 +2,73 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections import Counter
 
 import numpy as np
 import pandas as pd
 from joblib import load
 
 
+@dataclass(frozen=True)
+class ModelIOConfig:
+    input_base: str
+    output_col: str
+    output_lag_base: str = "y_filt"
+
+
+def _lag_base(col: str) -> str | None:
+    if "_lag" not in col:
+        return None
+    return col.rsplit("_lag", 1)[0]
+
+
+def infer_model_io(bundle: dict, *, input_base: str | None = None, output_lag_base: str | None = None) -> ModelIOConfig:
+    x_cols: list[str] = bundle["X_cols"]
+    output_col: str = bundle["y_col"]
+
+    lag_bases = [_lag_base(col) for col in x_cols if _lag_base(col) is not None]
+    lag_bases = [base for base in lag_bases if base is not None]
+
+    if output_lag_base is None:
+        if "y_filt_lag1" in x_cols:
+            output_lag_base = "y_filt"
+        elif f"{output_col}_lag1" in x_cols:
+            output_lag_base = output_col
+        else:
+            output_lag_base = "y_filt"
+
+    if input_base is None:
+        counts = Counter(base for base in lag_bases if base != output_lag_base)
+        if not counts:
+            raise ValueError("Could not infer input_base from bundle['X_cols']")
+        input_base = counts.most_common(1)[0][0]
+
+    return ModelIOConfig(
+        input_base=input_base,
+        output_col=output_col,
+        output_lag_base=output_lag_base,
+    )
+
+
 @dataclass
 class ArxState:
     row: pd.Series
+    io: ModelIOConfig
 
-    def current_y(self, y_col: str = "El1_Resistance_mOhm_filt") -> float:
-        for col in (y_col, "y_target", "y_filt_lag1"):
+    def current_y(self) -> float:
+        for col in (self.io.output_col, "y_target", f"{self.io.output_lag_base}_lag1"):
             if col in self.row.index:
                 return float(self.row[col])
-        raise KeyError(f"No {y_col}, y_target, or y_filt_lag1 in state")
+        raise KeyError(
+            f"No {self.io.output_col}, y_target, or {self.io.output_lag_base}_lag1 in state"
+        )
 
-    def current_u(self, u_base: str = "El1_dpos_mps_filt") -> float:
-        lag_col = f"{u_base}_lag1"
+    def current_u(self) -> float:
+        lag_col = f"{self.io.input_base}_lag1"
         if lag_col in self.row.index:
             return float(self.row[lag_col])
-        if u_base in self.row.index:
-            return float(self.row[u_base])
+        if self.io.input_base in self.row.index:
+            return float(self.row[self.io.input_base])
         return 0.0
 
     def predict_next_y(
@@ -61,17 +106,19 @@ class ArxState:
             new = np.empty_like(old)
             new[1:] = old[:-1]
 
-            if base == "El1_dpos_mps_filt":
+            if base == self.io.input_base:
                 new[0] = u_new
-            elif base == "y_raw":
+            elif base == self.io.output_lag_base:
                 new[0] = y_new
             else:
                 new[0] = old[0]
 
             self.row.loc[cols] = new
 
-        if "El1_dpos_mps_filt" in self.row.index:
-            self.row["El1_dpos_mps_filt"] = u_new
+        if self.io.input_base in self.row.index:
+            self.row[self.io.input_base] = u_new
+        if self.io.output_col in self.row.index:
+            self.row[self.io.output_col] = y_new
         if "y_target" in self.row.index:
             self.row["y_target"] = y_new
 
@@ -85,7 +132,13 @@ def load_arx_bundle(model_path: str) -> dict:
     return bundle
 
 
-def load_initial_state(csv_path: str | Path, bundle: dict, idx: int | None = None) -> ArxState:
+def load_initial_state(
+    csv_path: str | Path,
+    bundle: dict,
+    idx: int | None = None,
+    *,
+    io_cfg: ModelIOConfig | None = None,
+) -> ArxState:
     df = pd.read_csv(csv_path)
     x_cols: list[str] = bundle["X_cols"]
     y_col: str = bundle["y_col"]
@@ -100,4 +153,6 @@ def load_initial_state(csv_path: str | Path, bundle: dict, idx: int | None = Non
         raise ValueError(f"No valid (non-NaN) rows in {csv_path} for columns {needed}")
 
     row = df_valid.iloc[-1].copy() if idx is None else df.iloc[idx].copy()
-    return ArxState(row=row)
+    if io_cfg is None:
+        io_cfg = infer_model_io(bundle)
+    return ArxState(row=row, io=io_cfg)

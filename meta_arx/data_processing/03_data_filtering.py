@@ -6,7 +6,7 @@ from scipy.signal import butter, filtfilt
 
 # ---------- CONFIG ----------
 IN_CSV  = Path("meta_arx/data/1s_data_from_plant/07_24.csv")
-OUT_CSV = Path("meta_arx/data/filt_data/07_24_filt_01.csv")
+OUT_CSV = Path("meta_arx/data/filt_data/07_24_filt_pos_01.csv")
 
 # Target signal for ARX: electrode 1 resistance (mΩ)
 TARGET_COL = "El1_Resistance_mOhm"
@@ -91,7 +91,7 @@ def main():
         )
 
     # ----- Filter exogenous SISO signals (speed, current, RMS voltage) -----
-    exog_to_filter = [SPEED_COL, "El1_kA", "RMS_V_transformer"]
+    exog_to_filter = [POS_COL, "El1_kA", "RMS_V_transformer"]
     for c in exog_to_filter:
         if c not in df.columns:
             raise ValueError(f"Missing exogenous column '{c}' needed for ARX.")
