@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-CSV_PATH = Path("run_simulation/history/closed_loop_sim.csv")
+CSV_PATH = Path("run_simulation/history/closed_loop_sim_test.csv")
 
 
 def get_col(df: pd.DataFrame, *names: str) -> pd.Series:

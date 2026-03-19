@@ -14,8 +14,8 @@ from run_simulation.closed_loop.closed_loop_sim import run_closed_loop
 from run_simulation.closed_loop.controller_registry import make_controller
 
 
-MODEL_PATH = Path("run_simulation/models/arx_el1res_2321_07.meta.joblib")
-HIST_CSV = Path("run_simulation/init_data/arx_el1res_2321_07.csv")
+MODEL_PATH = Path("run_simulation/models/synthetic_plant.meta.joblib")
+HIST_CSV = Path("run_simulation/init_data/synthetic_plant_init.csv")
 
 
 def load_reference_csv(path: str | Path) -> np.ndarray:
@@ -100,6 +100,6 @@ if __name__ == "__main__":
         ref_csv="run_simulation/init_data/reference.csv",
         controller_name="pid",
         controller_config="run_simulation/init_data/PID_params.csv",
-        out_csv="run_simulation/history/closed_loop_sim.csv",
+        out_csv="run_simulation/history/closed_loop_sim_test.csv",
         dt=1.0,
     )
