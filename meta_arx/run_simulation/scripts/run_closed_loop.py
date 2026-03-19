@@ -14,8 +14,8 @@ from run_simulation.closed_loop.closed_loop_sim import run_closed_loop
 from run_simulation.closed_loop.controller_registry import make_controller
 
 
-MODEL_PATH = Path("run_simulation/models/synthetic_plant.meta.joblib")
-HIST_CSV = Path("run_simulation/init_data/synthetic_plant_init.csv")
+MODEL_PATH = Path("run_simulation/models/synthetic_plant_ocsillatory.meta.joblib")
+HIST_CSV = Path("run_simulation/init_data/synthetic_plant_ocsillatory_init.csv")
 
 
 def load_reference_csv(path: str | Path) -> np.ndarray:

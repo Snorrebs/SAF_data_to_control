@@ -50,8 +50,8 @@ from sklearn.preprocessing import StandardScaler
 #  OUTPUT PATHS
 # ------------------------------------------------------------------ #
 OUT_DIR     = Path("run_simulation/models")
-BUNDLE_PATH = OUT_DIR / "synthetic_plant.meta.joblib"
-INIT_CSV    = Path("run_simulation/init_data") / "synthetic_plant_init.csv"
+BUNDLE_PATH = OUT_DIR / "synthetic_plant_ocsillatory.meta.joblib"
+INIT_CSV    = Path("run_simulation/init_data") / "synthetic_plant_ocsillatory_init.csv"
 
 # ------------------------------------------------------------------ #
 #  SIGNAL NAMES  (must match ModelIOConfig used in run_closed_loop)
@@ -65,13 +65,12 @@ V_BASE     = "RMS_V_transformer_filt"
 # ------------------------------------------------------------------ #
 #  PLANT PARAMETERS
 # ------------------------------------------------------------------ #
-R       = 0.92
-OMEGA_D = 0.35
+R       = 0.97      # was 0.92 — much slower decay, oscillation persists longer
+OMEGA_D = 0.5       # was 0.35 — faster oscillation (~0.08 Hz)
+B1      = 15.0      # was 8.0
+B2      =  6.0      # was 3.0
 A1      = 2 * R * np.cos(OMEGA_D)   # ~1.686
 A2      = -(R ** 2)                  # ~-0.846
-
-B1 =  8.0   # u lag-2 gain
-B2 =  3.0   # u lag-3 gain
 
 # Operating point (physical units)
 Y_OP     = 250.0   # mOhm
