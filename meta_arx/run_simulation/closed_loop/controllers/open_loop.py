@@ -37,7 +37,8 @@ class OpenLoopController:
 
     def step(self, reference: float, y_pred: float, u_prev: float) -> tuple[float, float]:
         e = float(reference) - float(y_pred)
-        u_des = float(self.params.u_constant)
+        r = float(reference)
+        u_des = float(self.params.u_constant)*r
         return u_des, e
 
     def update_integral(self, accept: bool) -> None:
