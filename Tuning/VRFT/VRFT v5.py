@@ -46,13 +46,15 @@ tau = 0   # Time delay
 t = 20    # Settling time for the system poles
 q = 3     # System order
 N = 2000  # Simulation time. Used only in the data generation step
-Ts=1      # Discretisation interval
+Ts = 1    # Discretisation interval
 
 A = 2     # Amplitude of random data generation. Effectively a hyperparameter.
 
 # Specify a frequency weighting function on the form:
 # omega/(omega+s)
 omega=0.1 # Cutoff frequency in the frequency weighting function
+
+testing = False # Runs the Simulator at the end of the script with the new controller if True.
 
 # No need to interact with anything else in this script for simple tuning. Some functions defined below may be usefull however.
 #%%
@@ -87,7 +89,8 @@ def construct_phi(u):
     G = [] # Initialise phi^-1/2
     for i in pxx:
         G.append(1/np.sqrt(i))
-    Phi_inv_num = np.polyfit(f,G,1) # Fit a linear curve to G
+    # Phi_inv_num = np.polyfit(f,G,1) # Fit a linear curve to G
+    Phi_inv_num = [1] # seems to work either way.
     Phi_inv_den = [1] 
     return Phi_inv_num, Phi_inv_den
 
@@ -178,7 +181,7 @@ save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "op
 data.to_csv(save_location, index=False)
 
 # Generate a white noise referense (continually exciting across all frequencies)
-generate_reference(N,"random",1)
+generate_reference(N,"random",A)
 
 # Run simulation with open-loop controller:
 run_closed_loop_from_config(
@@ -189,10 +192,9 @@ run_closed_loop_from_config(
     dt=1.0,
 )
 
-_, y ,u_pos, _, _ = read_output()
+_, y ,u_pos, _, r = read_output()
 
-#u = np.gradient(u_pos) <- this term requires more work
-u = u_pos
+u = np.gradient(u_pos,1)
 # Clean up refernce; restores 200 second 1.2 mOhm reference:
 generate_reference(200)
 
@@ -234,6 +236,10 @@ phi_PID=np.column_stack([e_v[1:],np.cumsum(e_v)[1:]*Ts,-(y_v[1:]-y_v[:-1])/Ts])
 
 # Solve VRFT optimisation problem with an OLS approach.
 theta_PID, _, _, _ = lstsq(phi_PID, u_l[1:], rcond=None)
+# Clamp negative values for the integrator term.
+if theta_PID[1]<0:
+    theta_PID[1]=0
+
 
 print("Tuned controller parameters (θ):", theta_PID)
 
@@ -247,18 +253,32 @@ data.to_csv(save_location, index=False)
 # Testing. Commented out by default.
 # -----------------------------
 
-# run_closed_loop_from_config(
-#     ref_csv="run_simulation/init_data/reference.csv",
-#     controller_name="pid",
-#     controller_config="run_simulation/init_data/PID_params.csv",
-#     out_csv="run_simulation/history/closed_loop_sim.csv",
-#     dt=1.0,
-# )
+if testing == True:
+    run_closed_loop_from_config(
+        ref_csv="run_simulation/init_data/reference.csv",
+        controller_name="pid",
+        controller_config="run_simulation/init_data/PID_params.csv",
+        out_csv="run_simulation/history/closed_loop_sim.csv",
+        dt=1.0,
+        )
+    
+    num_ic = max(len(M_den),len(M_num))-1
+    init_data = project_root / "meta_arx" / "run_simulation" / "init_data" / "synthetic_plant_ocsillatory_init.csv"
+    ic_data = pd.read_csv(init_data, usecols=["El1_Resistance_mOhm_filt"])
+    ic = ic_data.tail(num_ic)
+    ic = ic.to_numpy()[0,0]
+    zi = np.array([[ic,0,0]])
+    zi = zi.flatten()
+ 
+    t_test, y_test ,u_test, _, REF_test = read_output()
+    filter_ref = REF_test.to_numpy()
+    filter_ref[0] = 1.2
+    ref_model_output = lfilter(M_num,M_den,filter_ref,zi=zi)
 
-# t_test, y_test ,u_test, _, REF_test = read_output()
-
-# plt.plot(t_test,y_test,label="resistance")
-# plt.plot(t_test,REF_test,label="reference")
-# plt.plot(t_test,u_test,label="electrode position")
-# plt.legend()
-# plt.show()
+    plt.figure(figsize=(8,5),dpi=600)
+    plt.plot(t_test,y_test,"b",label="El1 Resistance")
+    plt.plot(t_test,REF_test,'k:',label="Reference signal")
+    plt.plot(t_test,u_test,"r-",label="Electrode position")
+    plt.plot(t_test,ref_model_output[0],"g--",label="reference model output")
+    plt.legend()
+    plt.show()
