@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim_varx.csv")
+CSV_PATH = Path("run_simulation/history/closed_loop_sim_varx.csv")
 
 
 def _pick_cols(df: pd.DataFrame, candidates: list[str]) -> str:
@@ -14,7 +14,8 @@ def _pick_cols(df: pd.DataFrame, candidates: list[str]) -> str:
     raise KeyError(f"None of these columns found: {candidates}")
 
 
-def main() -> None:
+def main(path: str | Path) -> None:
+    CSV_PATH = Path(path)
     df = pd.read_csv(CSV_PATH)
 
     # time column (support old/new logs)
@@ -95,4 +96,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(path=CSV_PATH)

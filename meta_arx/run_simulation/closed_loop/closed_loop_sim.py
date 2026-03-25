@@ -3,27 +3,40 @@ from __future__ import annotations
 import numpy as np
 
 from .arx_state import ArxState
-from .controller import PIDController
+from .controller_api import Controller
+
+
+# Per-electrode actuator limits (shared across all electrodes for now)
+_DU_MAX = 0.01   # max position change per step [m]
+_U_MIN  = 0.1    # minimum electrode position   [m]
+_U_MAX  = 2.0    # maximum electrode position   [m]
+
+
+def apply_actuator_limits(u_des: float, u_prev: float) -> float:
+    """Simple actuator model: rate-limit then position-saturate."""
+    du = np.clip(u_des - u_prev, -_DU_MAX, _DU_MAX)
+    u = np.clip(u_prev + du, _U_MIN, _U_MAX)
+    return float(u)
 
 
 def run_closed_loop(
     model: dict,
     state: ArxState,
     reference: np.ndarray,
-    controllers: list[PIDController],
+    controllers: list[Controller],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Run closed-loop simulation for 3-output VARX-current model.
+    """Run closed-loop simulation for a 3-output VARX model.
 
     Args:
-        model: trained bundle (must contain y_cols, X_cols, scalers, model)
-        state: ArxState initialized from history CSV
-        reference: array shape (n, 3) or (n,) (will broadcast to 3)
-        controllers: list of 3 PIDController instances
+        model:       trained bundle (must contain y_cols, X_cols, scalers, model)
+        state:       ArxState initialised from history CSV
+        reference:   shape ``(n,)`` (broadcast to all 3 electrodes) or ``(n, 3)``
+        controllers: list of 3 Controller instances (one per electrode)
 
     Returns:
-        y: (n+1, 3) predicted currents
-        u: (n, 3) commanded positions
-        e: (n, 3) errors
+        y: ``(n+1, 3)`` predicted outputs   (e.g. currents [kA])
+        u: ``(n,   3)`` commanded positions [m]
+        e: ``(n,   3)`` control errors
     """
 
     reference = np.asarray(reference, dtype=float)
@@ -35,30 +48,32 @@ def run_closed_loop(
     n = reference.shape[0]
 
     y = np.zeros((n + 1, 3), dtype=float)
-    u = np.zeros((n, 3), dtype=float)
-    e = np.zeros((n, 3), dtype=float)
+    u = np.zeros((n,     3), dtype=float)
+    e = np.zeros((n,     3), dtype=float)
 
     y_cols = model.get("y_cols") or [model.get("y_col")]
     y[0] = state.current_y(y_cols=y_cols)
-
-    u_prev = state.current_u()  # defaults to 3 positions
+    u_prev = state.current_u()          # shape (3,)
 
     if len(controllers) != 3:
-        raise ValueError("controllers must be a list of 3 PIDController instances")
+        raise ValueError(f"Expected 3 controllers, got {len(controllers)}")
 
     for c in controllers:
         c.reset()
 
     for k in range(n):
-        y_pred = state.predict_next_y(model)  # (3,)
+        # one-step plant prediction
+        y_pred = state.predict_next_y(model)   # shape (3,)
 
         u_cmd = np.zeros(3, dtype=float)
         for i in range(3):
-            u_cmd[i], e[k, i] = controllers[i].step(
+            u_des, e[k, i] = controllers[i].step(
                 reference=float(reference[k, i]),
                 y_pred=float(y_pred[i]),
                 u_prev=float(u_prev[i]),
             )
+            # actuator limits applied after the controller
+            u_cmd[i] = apply_actuator_limits(u_des, float(u_prev[i]))
 
         u[k] = u_cmd
         y[k + 1] = y_pred
