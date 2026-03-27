@@ -18,11 +18,9 @@ def main(path: str | Path) -> None:
     CSV_PATH = Path(path)
     df = pd.read_csv(CSV_PATH)
 
-    # time column (support old/new logs)
     t_col = _pick_cols(df, ["t_s", "t", "time_s"])
     t = df[t_col]
 
-    # References: either r (scalar) or r1/r2/r3
     if all(c in df.columns for c in ["r1", "r2", "r3"]):
         r = df[["r1", "r2", "r3"]]
     elif "r" in df.columns:
@@ -30,15 +28,11 @@ def main(path: str | Path) -> None:
     else:
         r = None
 
-    # Currents: prefer new naming, fallback to older single-output logs
     if all(c in df.columns for c in ["y1", "y2", "y3"]):
         y = df[["y1", "y2", "y3"]]
-        y_label = "Current [kA]/Resistance [mOhm]"
-        y_title = "Electrode currents (pred)"
     else:
-        raise KeyError("Could not find current/resistance columns to plot.")
+        raise KeyError("Could not find resistance columns to plot.")
 
-    # Positions: prefer u1/u2/u3, else u_cmd (legacy)
     if all(c in df.columns for c in ["u1", "u2", "u3"]):
         u = df[["u1", "u2", "u3"]]
     elif "u_cmd" in df.columns:
@@ -46,7 +40,6 @@ def main(path: str | Path) -> None:
     else:
         u = None
 
-    # Errors: prefer e1/e2/e3, else e
     if all(c in df.columns for c in ["e1", "e2", "e3"]):
         e = df[["e1", "e2", "e3"]]
     elif "e" in df.columns:
@@ -54,25 +47,25 @@ def main(path: str | Path) -> None:
     else:
         e = None
 
-    fig, axs = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-    fig.suptitle("Closed-loop VARX Simulation", fontsize=14)
+    fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
+    fig.suptitle("Closed-loop VARX Simulation — Resistance control", fontsize=14)
 
-    # --- Y plot ---
+    # --- Resistance plot ---
     for col in y.columns:
         axs[0].plot(t, y[col], lw=2, label=col)
     if r is not None:
         for col in r.columns:
             axs[0].plot(t, r[col], "--", lw=2, label=f"{col} (ref)")
-    axs[0].set_ylabel(y_label)
-    axs[0].set_title(y_title)
+    axs[0].set_ylabel("Resistance [mΩ]")
+    axs[0].set_title("Electrode resistances (pred)")
     axs[0].legend(ncol=3)
     axs[0].grid(True, alpha=0.3)
 
-    # --- U plot ---
+    # --- Position plot ---
     if u is not None:
         for col in u.columns:
             axs[1].plot(t, u[col], lw=2, label=col)
-        axs[1].set_ylabel("Electrode Position [m]")
+        axs[1].set_ylabel("Electrode position [m]")
         axs[1].legend(ncol=3)
         axs[1].grid(True, alpha=0.3)
     else:
@@ -83,14 +76,24 @@ def main(path: str | Path) -> None:
     if e is not None:
         for col in e.columns:
             axs[2].plot(t, e[col], lw=2, label=col)
-        axs[2].set_ylabel("Error")
+        axs[2].set_ylabel("Error [mΩ]")
         axs[2].legend(ncol=3)
         axs[2].grid(True, alpha=0.3)
     else:
         axs[2].text(0.5, 0.5, "No error columns found", ha="center", va="center")
         axs[2].axis("off")
 
-    axs[2].set_xlabel("Time [s]")
+    # --- Voltage disturbance plot ---
+    if "v_transformer" in df.columns:
+        axs[3].plot(t, df["v_transformer"], lw=1.5, color="steelblue", label="V transformer")
+        axs[3].set_ylabel("Voltage [V]")
+        axs[3].legend()
+        axs[3].grid(True, alpha=0.3)
+    else:
+        axs[3].text(0.5, 0.5, "No voltage disturbance column found", ha="center", va="center")
+        axs[3].axis("off")
+
+    axs[3].set_xlabel("Time [s]")
     plt.tight_layout()
     plt.show()
 

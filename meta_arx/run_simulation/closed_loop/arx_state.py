@@ -17,12 +17,12 @@ class ArxState:
     def current_y(self, y_cols: list[str] | None = None) -> np.ndarray:
         """Return current output vector.
 
-        For VARX-current this is typically [El1_kA_filt, El2_kA_filt, El3_kA_filt].
+        For VARX-resistance this is [El1_Resistance_mOhm_filt, El2_Resistance_mOhm_filt, El3_Resistance_mOhm_filt].
         Falls back to lag1 if non-lagged columns are not present.
         """
 
         if y_cols is None:
-            y_cols = ["El1_kA_filt", "El2_kA_filt", "El3_kA_filt"]
+            y_cols = ["El1_Resistance_mOhm_filt", "El2_Resistance_mOhm_filt", "El3_Resistance_mOhm_filt"]
 
         vals: list[float] = []
         for c in y_cols:
@@ -35,11 +35,6 @@ class ArxState:
                 vals.append(float(self.row[lag1]))
                 continue
 
-            # legacy SISO fallback
-            if c == "El1_kA_filt" and "y_filt_lag1" in self.row.index:
-                vals.append(float(self.row["y_filt_lag1"]))
-                continue
-
             raise KeyError(f"No '{c}' (or '{c}_lag1') found in state")
 
         return np.asarray(vals, dtype=float)
@@ -47,8 +42,7 @@ class ArxState:
     def current_u(self, u_bases: list[str] | None = None) -> np.ndarray:
         """Return current input vector from lag1 values.
 
-        For VARX-current this is typically electrode positions:
-        [El1_pos_m_filt, El2_pos_m_filt, El3_pos_m_filt].
+        Electrode positions: [El1_pos_m_filt, El2_pos_m_filt, El3_pos_m_filt].
         """
 
         if u_bases is None:
@@ -76,7 +70,6 @@ class ArxState:
 
         model = bundle["model"]
         x_scaler = bundle["X_scaler"]
-        # new bundles use Y_scaler; keep backwards compatibility
         y_scaler = bundle.get("Y_scaler", bundle.get("y_scaler"))
         if y_scaler is None:
             raise KeyError("Bundle missing Y_scaler (or legacy y_scaler)")
@@ -95,21 +88,28 @@ class ArxState:
         y = y_scaler.inverse_transform(y_z)
         return y.reshape(-1)
 
-    def advance(self, u_new: np.ndarray, y_new: np.ndarray) -> None:
+    def advance(
+        self,
+        u_new: np.ndarray,
+        y_new: np.ndarray,
+        exog_new: dict[str, float] | None = None,
+    ) -> None:
         """Advance all *_lagk columns by one step.
 
-        - Updates *_kA_filt_lag* with y_new (vector)
+        - Updates *_Resistance_mOhm_filt_lag* with y_new (vector)
         - Updates *_pos_m_filt_lag* with u_new (vector)
-        - Keeps other exogenous lags (voltages/resistances) frozen by default
+        - Updates any exogenous lag whose base name is in exog_new (e.g.
+          ``{"RMS_V_transformer_filt": 412.3}``)
+        - Freezes all other exogenous lags (voltages, currents, etc.)
         """
 
         u_new = np.asarray(u_new, dtype=float).reshape(-1)
         y_new = np.asarray(y_new, dtype=float).reshape(-1)
+        exog_new = exog_new or {}
 
         lag_bases = sorted(col[:-5] for col in self.row.index if col.endswith("_lag1"))
 
         for base in lag_bases:
-            # detect available lags for this base
             cols: list[str] = []
             k = 1
             while True:
@@ -127,22 +127,27 @@ class ArxState:
             new[1:] = old[:-1]
 
             if base.endswith("pos_m_filt"):
-                # expects El1/El2/El3 naming
+                # electrode position -> driven by u_new
                 try:
                     idx = int(base[2]) - 1
                 except Exception:
                     idx = 0
                 new[0] = u_new[idx] if idx < len(u_new) else float(u_new[-1])
 
-            elif base.endswith("kA_filt"):
+            elif base.endswith("Resistance_mOhm_filt"):
+                # electrode resistance -> driven by y_new
                 try:
                     idx = int(base[2]) - 1
                 except Exception:
                     idx = 0
                 new[0] = y_new[idx] if idx < len(y_new) else float(y_new[-1])
 
+            elif base in exog_new:
+                # caller-supplied exogenous value (e.g. live voltage disturbance)
+                new[0] = float(exog_new[base])
+
             else:
-                # exogenous: freeze (extend here later if you replay trajectories)
+                # freeze all other exogenous signals
                 new[0] = old[0]
 
             self.row.loc[cols] = new
@@ -152,7 +157,7 @@ class ArxState:
             if base in self.row.index and i < len(u_new):
                 self.row[base] = float(u_new[i])
 
-        for i, base in enumerate(["El1_kA_filt", "El2_kA_filt", "El3_kA_filt"]):
+        for i, base in enumerate(["El1_Resistance_mOhm_filt", "El2_Resistance_mOhm_filt", "El3_Resistance_mOhm_filt"]):
             if base in self.row.index and i < len(y_new):
                 self.row[base] = float(y_new[i])
 
@@ -160,13 +165,11 @@ class ArxState:
 def load_arx_bundle(model_path: str) -> dict:
     bundle = load(model_path)
 
-    # common required
     required_any = ["model", "X_scaler", "X_cols"]
     missing_any = [k for k in required_any if k not in bundle]
     if missing_any:
         raise KeyError(f"Model bundle is missing required keys: {missing_any}")
 
-    # VARX vs legacy
     has_varx = ("y_cols" in bundle) and ("Y_scaler" in bundle or "y_scaler" in bundle)
     has_siso = ("y_col" in bundle) and ("y_scaler" in bundle or "Y_scaler" in bundle)
 
@@ -180,7 +183,6 @@ def load_initial_state(csv_path: str | Path, bundle: dict, idx: int | None = Non
     df = pd.read_csv(csv_path)
     x_cols: list[str] = bundle["X_cols"]
 
-    # VARX bundles store y_cols; legacy stores y_col
     y_cols = bundle.get("y_cols")
     if y_cols is None:
         y_cols = [bundle["y_col"]]

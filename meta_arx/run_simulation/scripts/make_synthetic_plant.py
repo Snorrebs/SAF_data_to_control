@@ -5,26 +5,28 @@ make_synthetic_plant.py
 Generates a synthetic oscillatory VARX plant bundle for 3 electrodes that
 plugs directly into the arx_state.py / closed_loop_sim.py pipeline.
 
-Plant dynamics (discrete-time, Ts = 1 s) — identical structure per electrode,
-with slight parameter variation so the three channels are distinguishable:
+Plant dynamics (discrete-time, Ts = 1 s) — cross-coupled across electrodes:
 
-    y_i(t) = a1_i * y_i(t-1) + a2_i * y_i(t-2)
-            + b1_i * u_i(t-2) + b2_i * u_i(t-3)
+    R_i(t) = Y_OP[i]
+            + A1[i] * (R_i(t-1) - Y_OP[i])
+            + A2[i] * (R_i(t-2) - Y_OP[i])
+            + sum_j  B1[i,j] * (u_j(t-2) - U_OP[j])
+            + sum_j  B2[i,j] * (u_j(t-3) - U_OP[j])
             + noise_i
 
-Electrodes are independent (no cross-coupling) to keep the example simple.
+Cross-coupling:
+  - Diagonal B terms: negative  (lower electrode i -> lower R_i, direct effect)
+  - Off-diagonal B terms: positive (lower electrode j -> raises R_i, redistribution)
 
 Output
 ------
-  run_simulation_PID/models/synthetic_varx_plant.meta.joblib
-  run_simulation_PID/init_data/synthetic_varx_plant_init.csv
+  run_simulation/models/synthetic_varx_plant.meta.joblib
+  run_simulation/init_data/synthetic_varx_plant_init.csv
 
 Usage
 -----
   cd meta_arx/
-  python -m run_simulation_PID.scripts.make_synthetic_plant
-
-Then in run_closed_loop.py point MODEL_PATH and HIST_CSV at the files above.
+  python -m run_simulation.scripts.make_synthetic_plant
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from joblib import dump
+from noise import pnoise1
 from sklearn.linear_model import Ridge
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import StandardScaler
@@ -46,37 +49,54 @@ BUNDLE_PATH = OUT_DIR / "synthetic_varx_plant.meta.joblib"
 INIT_CSV    = Path("run_simulation/init_data") / "synthetic_varx_plant_init.csv"
 
 # ------------------------------------------------------------------ #
-#  SIGNAL NAMES  (must match arx_state.py naming conventions)
+#  SIGNAL NAMES
 # ------------------------------------------------------------------ #
-Y_COLS  = ["El1_kA_filt",    "El2_kA_filt",    "El3_kA_filt"]
-U_BASES = ["El1_pos_m_filt", "El2_pos_m_filt", "El3_pos_m_filt"]
+Y_COLS  = ["El1_Resistance_mOhm_filt", "El2_Resistance_mOhm_filt", "El3_Resistance_mOhm_filt"]
+U_BASES = ["El1_pos_m_filt",           "El2_pos_m_filt",           "El3_pos_m_filt"]
 V_BASE  = "RMS_V_transformer_filt"
 
 # ------------------------------------------------------------------ #
-#  PLANT PARAMETERS  (slight variation per electrode)
+#  PLANT PARAMETERS
 # ------------------------------------------------------------------ #
-#  Poles: r_i * exp(±j * omega_i)  — all stable, all oscillatory
-R       = [0.96, 0.95, 0.97]
+R_POLES = [0.96, 0.95, 0.97]
 OMEGA_D = [0.40, 0.50, 0.35]
 
-A1 = [2 * R[i] * np.cos(OMEGA_D[i]) for i in range(3)]
-A2 = [-(R[i] ** 2)                   for i in range(3)]
+A1 = [2 * R_POLES[i] * np.cos(OMEGA_D[i]) for i in range(3)]
+A2 = [-(R_POLES[i] ** 2)                   for i in range(3)]
 
-B1 = [12.0, 14.0, 10.0]   # input gain lag-2
-B2 = [ 5.0,  6.0,  4.0]   # input gain lag-3
+# B1[i,j] = effect of electrode j position on electrode i resistance at lag 2
+# Diagonal negative: lower own electrode -> lower own resistance
+# Off-diagonal positive: lower other electrode -> raise own resistance (redistribution)
+B1 = np.array([
+    [-8.0,  2.5,  2.5],
+    [ 2.5, -9.0,  2.5],
+    [ 2.5,  2.5, -7.0],
+], dtype=float)
 
-# Operating points (physical units)
-Y_OP  = [80.0,  82.0,  78.0]   # kA
-U_OP  = [ 0.50,  0.52,  0.48]  # m
-V_OP  = 400.0                   # V
+B2 = np.array([
+    [-3.0,  1.0,  1.0],
+    [ 1.0, -3.5,  1.0],
+    [ 1.0,  1.0, -2.5],
+], dtype=float)
 
-NOISE_STD = 0.3   # kA
-WARMUP    = 300
-TS        = 1.0
+# Operating points
+Y_OP = [300.0, 305.0, 295.0]   # mΩ
+U_OP = [  0.50,  0.52,  0.48]  # m
+V_OP = 400.0                    # V
+
+NOISE_STD  = 1.0   # mΩ — per-electrode process noise
+WARMUP     = 300
+INIT_ROWS  = 100   # how many warmup rows to save in the init CSV for VRFT history
+TS         = 1.0
+
+# Perlin disturbance on transformer voltage
+PERLIN_AMP   = 20.0   # V   — peak deviation from V_OP
+PERLIN_SCALE = 0.01   # controls frequency: smaller = slower drift
+PERLIN_OCT   = 4      # octaves: more = rougher texture
+C_V          = 0.05   # mΩ/V — how much voltage deviation affects resistance
 
 # ------------------------------------------------------------------ #
 #  FEATURE COLUMN ORDER
-#  All lag columns for all three electrodes + shared voltage lag
 # ------------------------------------------------------------------ #
 def _make_x_cols() -> list[str]:
     cols: list[str] = []
@@ -95,28 +115,31 @@ X_COLS = _make_x_cols()
 # ------------------------------------------------------------------ #
 #  WARM-UP SIMULATION
 # ------------------------------------------------------------------ #
-def simulate_warmup(n: int, rng: np.random.Generator):
-    y = np.array([np.full(n, Y_OP[i]) for i in range(3)])   # (3, n)
-    u = np.array([np.full(n, U_OP[i]) for i in range(3)])   # (3, n)
+def simulate_warmup(n: int, rng: np.random.Generator, v_hist: np.ndarray):
+    y = np.array([np.full(n, Y_OP[i]) for i in range(3)], dtype=float)
+    u = np.array([np.full(n, U_OP[i]) for i in range(3)], dtype=float)
 
-    # Small random walk on each electrode
     for i in range(3):
         du = rng.normal(0, 0.002, size=n).cumsum()
         u[i] += du
         u[i] = np.clip(u[i], U_OP[i] - 0.15, U_OP[i] + 0.15)
 
     for t in range(2, n):
+        u_dev_2 = u[:, t - 2] - np.array(U_OP)
+        u_dev_3 = u[:, t - 3] - np.array(U_OP) if t >= 3 else np.zeros(3)
+        v_dev   = v_hist[t - 1] - V_OP            # voltage deviation at t-1
         for i in range(3):
-            u3 = u[i, t - 3] if t >= 3 else U_OP[i]
             y[i, t] = (
-                A1[i] * y[i, t - 1]
-                + A2[i] * y[i, t - 2]
-                + B1[i] * (u[i, t - 2] - U_OP[i])
-                + B2[i] * (u3           - U_OP[i])
+                Y_OP[i]
+                + A1[i] * (y[i, t - 1] - Y_OP[i])
+                + A2[i] * (y[i, t - 2] - Y_OP[i])
+                + B1[i] @ u_dev_2
+                + B2[i] @ u_dev_3
+                + C_V * v_dev                      # voltage disturbance (same on all phases)
                 + rng.normal(0, NOISE_STD)
             )
 
-    return y, u   # both (3, n)
+    return y, u
 
 
 # ------------------------------------------------------------------ #
@@ -130,8 +153,17 @@ def main() -> None:
 
     # ---- 1. Warm-up simulation ----
     print("[synth] Simulating warm-up ...")
-    y_hist, u_hist = simulate_warmup(WARMUP, rng)
-    v_hist = np.full(WARMUP, V_OP) + rng.normal(0, 5.0, WARMUP)
+
+    # Perlin noise voltage disturbance — slow correlated drift around V_OP
+    v_hist = np.array([
+        V_OP + PERLIN_AMP * pnoise1(t * PERLIN_SCALE, octaves=PERLIN_OCT)
+        for t in range(WARMUP)
+    ])
+
+    y_hist, u_hist = simulate_warmup(WARMUP, rng, v_hist)
+
+    print(f"[synth] y_hist range: {y_hist.min():.1f} – {y_hist.max():.1f} mΩ")
+    print(f"[synth] u_hist range: {u_hist.min():.3f} – {u_hist.max():.3f} m")
 
     # ---- 2. Build dataset ----
     rows_x = []
@@ -150,7 +182,7 @@ def main() -> None:
         rows_x.append(x_row)
         rows_y.append({y_col: y_hist[i, t] for i, y_col in enumerate(Y_COLS)})
 
-    df_x = pd.DataFrame(rows_x)[X_COLS]   # enforce column order
+    df_x = pd.DataFrame(rows_x)[X_COLS]
     df_y = pd.DataFrame(rows_y)[Y_COLS]
 
     # ---- 3. Fit scalers ----
@@ -164,60 +196,54 @@ def main() -> None:
     Y_z = Y_scaler.transform(df_y.values)
 
     sigma_x = X_scaler.scale_
-    sigma_y = Y_scaler.scale_   # shape (3,)
+    sigma_y = Y_scaler.scale_
 
     print(f"[synth] Y means : {Y_scaler.mean_}")
     print(f"[synth] Y stds  : {sigma_y}")
 
-    # ---- 4. Build z-space coefficients (analytical, per electrode) ----
-    #
-    # For electrode i the true model in physical units is:
-    #   y_i(t) = A1_i*y_i(t-1) + A2_i*y_i(t-2) + B1_i*(u_i(t-2)-U_OP_i) + B2_i*(u_i(t-3)-U_OP_i)
-    #
-    # In standardised space (z = (x - mu) / sigma):
-    #   coef_j = physical_coef * sigma_x_j / sigma_y_i
-    #
-    # The MultiOutputRegressor wraps one Ridge per output, so we set
-    # coef_ on each estimator independently.
-
+    # ---- 4. Build z-space coefficients ----
     base_ridge = Ridge(alpha=1.0)
-    # Fit once just to initialise internal sklearn state
     base_ridge.fit(X_z, Y_z[:, 0])
 
     estimators = []
     for i in range(3):
         ridge = Ridge(alpha=1.0)
-        ridge.fit(X_z, Y_z[:, i])   # gives correct n_features_in_ etc.
+        ridge.fit(X_z, Y_z[:, i])
 
         coef = np.zeros(len(X_COLS))
         for j, col in enumerate(X_COLS):
-            u_base = U_BASES[i]
-            y_col  = Y_COLS[i]
-            if col == f"{u_base}_lag2":
-                coef[j] = B1[i] * sigma_x[j] / sigma_y[i]
-            elif col == f"{u_base}_lag3":
-                coef[j] = B2[i] * sigma_x[j] / sigma_y[i]
-            elif col == f"{y_col}_lag1":
+            # Input gains: all electrodes contribute to all outputs
+            for k, u_base in enumerate(U_BASES):
+                if col == f"{u_base}_lag2":
+                    coef[j] = B1[i, k] * sigma_x[j] / sigma_y[i]
+                elif col == f"{u_base}_lag3":
+                    coef[j] = B2[i, k] * sigma_x[j] / sigma_y[i]
+
+            # AR lags: diagonal only (each resistance depends on its own history)
+            y_col = Y_COLS[i]
+            if col == f"{y_col}_lag1":
                 coef[j] = A1[i] * sigma_x[j] / sigma_y[i]
             elif col == f"{y_col}_lag2":
                 coef[j] = A2[i] * sigma_x[j] / sigma_y[i]
-            # all other lags (other electrodes, voltage) → zero
 
         ridge.coef_          = coef
         ridge.intercept_     = 0.0
         ridge.n_features_in_ = len(X_COLS)
         estimators.append(ridge)
 
-    # Wrap in MultiOutputRegressor so model.predict() returns (n, 3)
     multi_model = MultiOutputRegressor(base_ridge)
     multi_model.estimators_ = estimators
     multi_model.n_jobs = None
 
-    # ---- 5. Sanity check ----
+    # ---- 5. Sanity checks ----
+    print("\n[synth] AR poles per electrode:")
     for i in range(3):
         ar_poly = np.array([1.0, -A1[i], -A2[i]])
         poles   = np.roots(ar_poly)
-        print(f"[synth] El{i+1} poles: {np.round(poles, 3)}  |poles|={np.round(np.abs(poles), 3)}")
+        print(f"  El{i+1} poles: {np.round(poles, 3)}  |poles|={np.round(np.abs(poles), 3)}")
+
+    print("\n[synth] B1 gain matrix (row=output electrode, col=input electrode):")
+    print(np.round(B1, 2))
 
     # ---- 6. Save bundle ----
     bundle = {
@@ -229,52 +255,59 @@ def main() -> None:
         "Y_scaler":   Y_scaler,
         "plant_params": {
             "a1": A1, "a2": A2,
-            "b1": B1, "b2": B2,
+            "B1": B1.tolist(), "B2": B2.tolist(),
             "y_op": Y_OP, "u_op": U_OP,
             "noise_std": NOISE_STD,
             "Ts": TS,
         },
     }
     dump(bundle, BUNDLE_PATH)
-    print(f"[synth] Bundle saved → {BUNDLE_PATH}")
+    print(f"\n[synth] Bundle saved → {BUNDLE_PATH}")
 
     # ---- 7. Save init CSV ----
-    #  One row containing the last warm-up state: all lag columns + y_cols
-    init_row: dict = {}
-    t = WARMUP - 1
-    for i, (u_base, y_col) in enumerate(zip(U_BASES, Y_COLS)):
-        init_row[f"{u_base}_lag1"] = float(u_hist[i, t])
-        init_row[f"{u_base}_lag2"] = float(u_hist[i, t - 1])
-        init_row[f"{u_base}_lag3"] = float(u_hist[i, t - 2])
-        init_row[f"{y_col}_lag1"]  = float(y_hist[i, t])
-        init_row[f"{y_col}_lag2"]  = float(y_hist[i, t - 1])
-        init_row[y_col]            = float(y_hist[i, t])
-    init_row[f"{V_BASE}_lag1"] = float(v_hist[t])
+    # Save the last INIT_ROWS timesteps of warmup history so that VRFT
+    # has enough run-up to fit conservative reference-model gains.
+    # load_initial_state() will use the last row as the starting state —
+    # the extra rows are there purely for VRFT to read further back in time.
+    init_rows = []
+    for t in range(WARMUP - INIT_ROWS, WARMUP):
+        row: dict = {}
+        for i, (u_base, y_col) in enumerate(zip(U_BASES, Y_COLS)):
+            row[f"{u_base}_lag1"] = float(u_hist[i, t])
+            row[f"{u_base}_lag2"] = float(u_hist[i, t - 1])
+            row[f"{u_base}_lag3"] = float(u_hist[i, t - 2])
+            row[f"{y_col}_lag1"]  = float(y_hist[i, t])
+            row[f"{y_col}_lag2"]  = float(y_hist[i, t - 1])
+            row[y_col]            = float(y_hist[i, t])
+        row[f"{V_BASE}_lag1"] = float(v_hist[t])
+        init_rows.append(row)
 
-    init_df = pd.DataFrame([init_row])
+    init_df = pd.DataFrame(init_rows)
     init_df.to_csv(INIT_CSV, index=False)
-    print(f"[synth] Init CSV saved → {INIT_CSV}")
+    print(f"[synth] Init CSV saved → {INIT_CSV}  ({len(init_df)} rows, last row = starting state)")
 
-    # ---- 8. Open-loop step response check ----
-    print("\n[synth] Step response check (u_i += 0.05 m from t=5):")
+    # ---- 8. Step response check: step u1 only, observe cross-coupling ----
+    print("\n[synth] Step response: u1 += 0.05 m from t=5, u2/u3 held at U_OP:")
     y_check = np.array([[Y_OP[i]] * 30 for i in range(3)], dtype=float)
     u_check = np.array([[U_OP[i]] * 30 for i in range(3)], dtype=float)
-    for i in range(3):
-        u_check[i, 5:] = U_OP[i] + 0.05
+    u_check[0, 5:] = U_OP[0] + 0.05
 
     for t in range(2, 30):
+        u_dev_2 = u_check[:, t - 2] - np.array(U_OP)
+        u_dev_3 = u_check[:, t - 3] - np.array(U_OP) if t >= 3 else np.zeros(3)
         for i in range(3):
-            u3 = u_check[i, t - 3] if t >= 3 else U_OP[i]
             y_check[i, t] = (
-                A1[i] * y_check[i, t - 1]
-                + A2[i] * y_check[i, t - 2]
-                + B1[i] * (u_check[i, t - 2] - U_OP[i])
-                + B2[i] * (u3                 - U_OP[i])
+                Y_OP[i]
+                + A1[i] * (y_check[i, t - 1] - Y_OP[i])
+                + A2[i] * (y_check[i, t - 2] - Y_OP[i])
+                + B1[i] @ u_dev_2
+                + B2[i] @ u_dev_3
             )
 
     for t in range(0, 30, 5):
-        vals = "  ".join(f"El{i+1}={y_check[i,t]:.2f} kA" for i in range(3))
+        vals = "  ".join(f"El{i+1}={y_check[i,t]:.2f} mΩ" for i in range(3))
         print(f"  t={t:3d}  {vals}")
+    print("  → El1 should rise, El2 and El3 should fall slightly")
 
 
 if __name__ == "__main__":
