@@ -32,6 +32,11 @@ module_path = project_root / "meta_arx"
 
 # Move working directory to meta_arx
 os.chdir(module_path)
+# Insert new working directory into PATH; known issue in Vscode
+if str(module_path) not in sys.path:
+    sys.path.insert(0,str(module_path))
+
+
 
 from run_simulation.scripts.run_closed_loop import run_closed_loop_from_config
 
@@ -54,8 +59,8 @@ A = 2     # Amplitude of random data generation. Effectively a hyperparameter.
 # omega/(omega+s)
 omega=0.1 # Cutoff frequency in the frequency weighting function
 
-testing = False # Runs the Simulator at the end of the script with the new controller if True.
-
+testing = True # Runs the Simulator at the end of the script with the new controller if True.
+# NOTE: Testing must be set to false if q>3, due to lack of initial conditions.
 # No need to interact with anything else in this script for simple tuning. Some functions defined below may be usefull however.
 #%%
 # ----------------------------
@@ -144,13 +149,13 @@ def generate_reference(N,method = "linear",amp = 2):
     if method == "stair":
         r = np.zeros(N)
         for i in range(0,N):
-            if i<25/Ts:
+            if i<N/(4*Ts):
                 r[i] = 1
-            elif i >= 25/Ts and i < 50/Ts:
+            elif i >= N/(4*Ts) and i < N/(2*Ts):
                 r[i] = 2
-            elif i >= 50/Ts and i < 75/Ts:
+            elif i >= N/(2*Ts) and i < (3*N)/(4*Ts):
                 r[i] = 3
-            elif i >= 75/Ts:
+            elif i >= (3*N)/(4*Ts):
                 r[i] = 0
     if method == "random":
         r = np.random.random(N)*amp
