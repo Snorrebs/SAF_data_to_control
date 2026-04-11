@@ -36,8 +36,6 @@ os.chdir(module_path)
 if str(module_path) not in sys.path:
     sys.path.insert(0,str(module_path))
 
-
-
 from run_simulation.scripts.run_closed_loop import run_closed_loop_from_config
 
 #%%
@@ -48,7 +46,7 @@ from run_simulation.scripts.run_closed_loop import run_closed_loop_from_config
 # Specify a reference closed loop transfer function on the form:
 # e^(-tau*s)/(1+0.2*t*s)^q
 tau = 0   # Time delay
-t = 20    # Settling time for the system poles
+t = 30    # Settling time for the system poles
 q = 3     # System order
 N = 2000  # Simulation time. Used only in the data generation step
 Ts = 1    # Discretisation interval
@@ -61,6 +59,7 @@ omega=0.1 # Cutoff frequency in the frequency weighting function
 
 testing = True # Runs the Simulator at the end of the script with the new controller if True.
 # NOTE: Testing must be set to false if q>3, due to lack of initial conditions.
+
 # No need to interact with anything else in this script for simple tuning. Some functions defined below may be usefull however.
 #%%
 # ----------------------------
@@ -156,7 +155,7 @@ def generate_reference(N,method = "linear",amp = 2):
             elif i >= N/(2*Ts) and i < (3*N)/(4*Ts):
                 r[i] = 3
             elif i >= (3*N)/(4*Ts):
-                r[i] = 0
+                r[i] = 0.5
     if method == "random":
         r = np.random.random(N)*amp
     data = pd.DataFrame(r, columns=["r"])
@@ -200,8 +199,6 @@ run_closed_loop_from_config(
 _, y ,u_pos, _, r = read_output()
 
 u = np.gradient(u_pos,1)
-# Clean up refernce; restores 200 second 1.2 mOhm reference:
-generate_reference(200)
 
 #%%
 # -----------------------------
@@ -259,6 +256,7 @@ data.to_csv(save_location, index=False)
 # -----------------------------
 
 if testing == True:
+    generate_reference(200,method="stair")
     run_closed_loop_from_config(
         ref_csv="run_simulation/init_data/reference.csv",
         controller_name="pid",
@@ -266,13 +264,12 @@ if testing == True:
         out_csv="run_simulation/history/closed_loop_sim.csv",
         dt=1.0,
         )
-    
     num_ic = max(len(M_den),len(M_num))-1
     init_data = project_root / "meta_arx" / "run_simulation" / "init_data" / "synthetic_plant_ocsillatory_init.csv"
     ic_data = pd.read_csv(init_data, usecols=["El1_Resistance_mOhm_filt"])
     ic = ic_data.tail(num_ic)
     ic = ic.to_numpy()[0,0]
-    zi = np.array([[ic,0,0]])
+    zi = np.array([[ic,1,2]])
     zi = zi.flatten()
  
     t_test, y_test ,u_test, _, REF_test = read_output()
@@ -285,5 +282,9 @@ if testing == True:
     plt.plot(t_test,REF_test,'k:',label="Reference signal")
     plt.plot(t_test,u_test,"r-",label="Electrode position")
     plt.plot(t_test,ref_model_output[0],"g--",label="reference model output")
+    plt.annotate(rf"$M(s) = \frac{{\exp(-{tau}s)}}{{(1 + 0.2 \cdot {t} s)^{q}}}$",xy=(50,-2.25),bbox=dict(boxstyle="square,pad=0.5",
+                          fc="white", ec="black", lw=1))
     plt.legend()
     plt.show()
+# Clean up refernce; restores 200 second 1.2 mOhm reference:
+generate_reference(200)
