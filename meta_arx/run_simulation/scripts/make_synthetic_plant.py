@@ -278,6 +278,8 @@ def main() -> None:
             row[f"{u_base}_lag3"] = float(u_hist[i, t - 2])
             row[f"{y_col}_lag1"]  = float(y_hist[i, t])
             row[f"{y_col}_lag2"]  = float(y_hist[i, t - 1])
+            row[f"{y_col}_lag3"]  = float(y_hist[i, t - 2])
+            row[f"{y_col}_lag4"]  = float(y_hist[i, t - 3])
             row[y_col]            = float(y_hist[i, t])
         row[f"{V_BASE}_lag1"] = float(v_hist[t])
         init_rows.append(row)

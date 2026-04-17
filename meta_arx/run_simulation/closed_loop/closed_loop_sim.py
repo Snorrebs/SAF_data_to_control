@@ -90,3 +90,71 @@ def run_closed_loop(
         u_prev = u_cmd
 
     return y, u, e
+
+
+def run_mpc_closed_loop(
+    model: dict,
+    state: ArxState,
+    reference: np.ndarray,
+    mpc,
+    exog_traj: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run closed-loop simulation with a MIMO MPC controller.
+
+    Unlike ``run_closed_loop``, a single MPC instance handles all 3 electrodes
+    jointly, exploiting cross-coupling information in the VARX model.
+
+    Args:
+        model:     trained bundle (y_cols, X_cols, scalers, model)
+        state:     ArxState initialised from history CSV
+        reference: ``(n,)`` broadcast or ``(n, 3)`` per-electrode reference [mΩ]
+        mpc:       ``LinearMPC`` instance
+        exog_traj: optional exogenous signal trajectories of length n
+
+    Returns:
+        y: ``(n+1, 3)`` predicted outputs   [mΩ]
+        u: ``(n,   3)`` commanded positions [m]
+        e: ``(n,   3)`` tracking errors     [mΩ]
+    """
+    reference = np.asarray(reference, dtype=float)
+    if reference.ndim == 1:
+        reference = np.repeat(reference.reshape(-1, 1), 3, axis=1)
+    if reference.shape[1] != 3:
+        raise ValueError(f"reference must have 3 columns, got {reference.shape}")
+
+    n = reference.shape[0]
+    N = mpc.params.N
+
+    y = np.zeros((n + 1, 3), dtype=float)
+    u = np.zeros((n,     3), dtype=float)
+    e = np.zeros((n,     3), dtype=float)
+
+    y_cols = model.get("y_cols") or [model.get("y_col")]
+    y[0] = state.current_y(y_cols=y_cols)
+    u_prev = state.current_u()
+
+    mpc.reset()
+
+    for k in range(n):
+        y_pred = state.predict_next_y(model)
+
+        ref_window = reference[k : k + N]          # (≤N, 3); MPC pads internally
+
+        u_des, _ = mpc.step(ref_window, state, u_prev)
+
+        u_cmd = np.zeros(3, dtype=float)
+        for i in range(3):
+            u_cmd[i] = apply_actuator_limits(u_des[i], float(u_prev[i]))
+
+        u[k] = u_cmd
+        y[k + 1] = y_pred
+        e[k] = reference[k] - y_pred
+
+        exog_k: dict[str, float] | None = None
+        if exog_traj:
+            exog_k = {sig: float(traj[k]) for sig, traj in exog_traj.items()}
+
+        state.advance(u_new=u_cmd, y_new=y_pred, exog_new=exog_k)
+        u_prev = u_cmd
+
+    return y, u, e

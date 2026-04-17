@@ -7,16 +7,15 @@ import pandas as pd
 from noise import pnoise1
 
 from run_simulation.closed_loop.arx_state import load_arx_bundle, load_initial_state
-from run_simulation.closed_loop.closed_loop_sim import run_closed_loop
-from run_simulation.closed_loop.controller_registry import make_controllers
+from run_simulation.closed_loop.closed_loop_sim import run_mpc_closed_loop
+from run_simulation.closed_loop.controller_registry import make_mpc_controller
 
 
 MODEL_PATH = Path("run_simulation/models/synthetic_varx_plant.meta.joblib")
 HIST_CSV   = Path("run_simulation/init_data/synthetic_varx_plant_init.csv")
 
-# Perlin disturbance — must match parameters used in make_synthetic_plant.py
-V_OP         = 400.0   # V
-PERLIN_AMP   = 15.0    # V
+V_OP         = 400.0
+PERLIN_AMP   = 15.0
 PERLIN_SCALE = 0.01
 PERLIN_OCT   = 4
 
@@ -25,9 +24,9 @@ def load_reference_csv(path: str | Path) -> np.ndarray:
     """Load reference signal from CSV.
 
     Accepts:
-    * columns ``r1``, ``r2``, ``r3``                                          → shape ``(n, 3)``
-    * columns ``El1_Resistance_mOhm``, ``El2_Resistance_mOhm``, ``El3_Resistance_mOhm`` → shape ``(n, 3)``
-    * single column ``r`` or ``reference``                                    → shape ``(n,)`` (broadcast later)
+    * columns ``r1``, ``r2``, ``r3``                                          → (n, 3)
+    * columns ``El1_Resistance_mOhm``, ``El2_Resistance_mOhm``, ``El3_Resistance_mOhm`` → (n, 3)
+    * single column ``r`` or ``reference``                                    → (n,) broadcast
     """
     df = pd.read_csv(path)
 
@@ -48,39 +47,34 @@ def load_reference_csv(path: str | Path) -> np.ndarray:
     )
 
 
-def run_closed_loop_from_config(
+def run_mpc_from_config(
     ref_csv: str | Path,
-    controller_name: str,
-    controller_config: str | Path,
+    mpc_config: str | Path,
     out_csv: str | Path,
     dt: float = 1.0,
     plotting: bool = False,
-):
-    bundle = load_arx_bundle(str(MODEL_PATH))
-    state  = load_initial_state(str(HIST_CSV), bundle)
-    u0     = state.current_u()
+) -> pd.DataFrame:
+    bundle    = load_arx_bundle(str(MODEL_PATH))
+    state     = load_initial_state(str(HIST_CSV), bundle)
+    u0        = state.current_u()
     reference = load_reference_csv(ref_csv)
 
     n = reference.shape[0] if reference.ndim > 1 else len(reference)
 
-    warmup_len = 300   # must match 
+    warmup_len = 300
     v_traj = np.array([
         V_OP + PERLIN_AMP * pnoise1((warmup_len + k) * PERLIN_SCALE, octaves=PERLIN_OCT)
         for k in range(n)
     ])
     exog_traj = {"RMS_V_transformer_filt": v_traj}
 
-    controllers = make_controllers(
-        name=controller_name,
-        config_path=str(controller_config),
-        dt=dt,
-    )
+    mpc = make_mpc_controller(str(mpc_config), bundle)
 
-    y, u, e = run_closed_loop(
+    y, u, e = run_mpc_closed_loop(
         model=bundle,
         state=state,
         reference=reference,
-        controllers=controllers,
+        mpc=mpc,
         exog_traj=exog_traj,
     )
 
@@ -116,14 +110,12 @@ def run_closed_loop_from_config(
 
     return out
 
-
+#python -m run_simulation.scripts.run_mpc
 if __name__ == "__main__":
-
-    run_closed_loop_from_config(
+    run_mpc_from_config(
         ref_csv="run_simulation/init_data/reference_res.csv",
-        controller_name="pid",
-        controller_config="run_simulation/init_data/PID_params.csv",
-        out_csv="run_simulation/history/closed_loop_sim_varx.csv",
+        mpc_config="run_simulation/init_data/MPC_params.csv",
+        out_csv="run_simulation/history/closed_loop_mpc.csv",
         dt=1.0,
         plotting=True,
     )

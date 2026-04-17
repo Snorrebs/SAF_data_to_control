@@ -166,7 +166,6 @@ def build_vrft_regressors_filtered(
     e_v = signal.lfilter(aux_num, aux_den, y) - signal.lfilter(F_num, F_den, y)
     u_l = signal.lfilter(F_num, F_den, u)
 
-    # PID regressor on filtered error
     P = e_v[1:]                      # proportional term
     D = (e_v[1:] - e_v[:-1]) / Ts    # derivative (backward diff)
     I = np.cumsum(e_v)[1:] * Ts      # integral (cumulative sum)

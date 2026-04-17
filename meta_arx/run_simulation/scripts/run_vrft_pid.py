@@ -1,61 +1,99 @@
-#!/usr/bin/env python3
-"""
-Run filtered VRFT PID tuning on a closed-loop CSV.
-
-Usage:
-    python -m run_simulation_PID.scripts.run_vrft_pid
-
-"""
+from __future__ import annotations
 
 from pathlib import Path
-from run_simulation_PID.scripts.vrft_pid import vrft_pid_from_csv_filtered, PIDParams
 
-# Path to the CSV produced by closed-loop simulation
-CSV_PATH = Path("run_simulation_PID/history/closed_loop_sim.csv")
+import pandas as pd
 
-# Column names in that CSV
-Y_COL = "y_pred_mOhm"   # output (resistance)
-U_COL = "u_cmd"   # input (electrode position command)
-
-# Sampling times
-TS = 1.0  # [s]
-
-# Filtered VRFT hyperparameters (reference model + weighting)
-TAU = 0.0        # time delay in M(s) [s]
-T_SHAPE = 400.0    # shaping parameter in (1 + 0.2*T_SHAPE*s)^q
-Q_ORDER = 3      # reference model order q
-OMEGA = 1.0     # cutoff for W(s) = omega / (s + omega)
+from run_simulation.vrft.vrft_pid import vrft_pid_from_csv_filtered
 
 
-def main() -> None:
-    if not CSV_PATH.exists():
-        raise FileNotFoundError(f"CSV not found: {CSV_PATH}")
+# ── defaults ──────────────────────────────────────────────────────────────────
+HISTORY_CSV  = Path("run_simulation/history/closed_loop_sim_varx.csv")
+OUT_CSV      = Path("run_simulation/init_data/PID_params_vrft.csv")
 
-    pid = vrft_pid_from_csv_filtered(
-        csv_path=str(CSV_PATH),
-        y_col=Y_COL,
-        u_col=U_COL,
-        Ts=TS,
-        tau=TAU,
-        t=T_SHAPE,
-        q=Q_ORDER,
-        omega=OMEGA,
-    )
+# Per-electrode column mapping in the history CSV
+_ELECTRODES = [
+    {"y_col": "y1", "u_col": "u1"},
+    {"y_col": "y2", "u_col": "u2"},
+    {"y_col": "y3", "u_col": "u3"},
+]
 
-    print("=== Filtered VRFT PID parameters ===")
-    print(f"CSV     : {CSV_PATH}")
-    print(f"Ts      : {TS}")
-    print(f"tau     : {TAU}")
-    print(f"t_shape : {T_SHAPE}")
-    print(f"q_order : {Q_ORDER}")
-    print(f"omega   : {OMEGA}")
-    print()
-    print(f"Kp = {pid.Kp:.6g}")
-    print(f"Ki = {pid.Ki:.6g}")
-    print(f"Kd = {pid.Kd:.6g}")
-    print("\nPaste these into run_closed_loop.py (PIDParams).")
+# Reference model and filter parameters
+_DEFAULT_TS    = 1.0    # sampling time [s]
+_DEFAULT_TAU   = 0.0    # transport delay [s]
+_DEFAULT_T     = 30.0   # desired closed-loop time constant [s]
+_DEFAULT_Q     = 2      # reference model order
+_DEFAULT_OMEGA   = 0.2   # VRFT weighting filter bandwidth [rad/s]
+_DEFAULT_WARMUP  = 20    # samples discarded after filtering to skip transient
+
+
+def run_vrft(
+    history_csv: str | Path = HISTORY_CSV,
+    out_csv: str | Path = OUT_CSV,
+    Ts: float = _DEFAULT_TS,
+    tau: float = _DEFAULT_TAU,
+    t: float = _DEFAULT_T,
+    q: int = _DEFAULT_Q,
+    omega: float = _DEFAULT_OMEGA,
+    warmup: int = _DEFAULT_WARMUP,
+    min_samples: int = 50,
+) -> pd.DataFrame:
+    """Run filtered VRFT on a closed-loop history CSV and save tuned PID params.
+
+    Args:
+        history_csv: path to history CSV with columns y1..y3 and u1..u3
+        out_csv:     where to write the 3-row PID params CSV
+        Ts:          sampling time [s]
+        tau:         reference model transport delay [s]
+        t:           desired closed-loop time constant [s] — main tuning knob
+        q:           reference model order (1 = first-order, 2 = second-order)
+        omega:       VRFT weighting filter bandwidth [rad/s]
+        min_samples: minimum number of non-NaN rows required
+
+    Returns:
+        DataFrame with columns kp, ki, kd (one row per electrode).
+    """
+    history_csv = Path(history_csv)
+    if not history_csv.exists():
+        raise FileNotFoundError(
+            f"History CSV not found: {history_csv}\n"
+            "Run run_closed_loop.py (or run_mpc.py) first to generate simulation data."
+        )
+
+    df = pd.read_csv(history_csv).dropna(subset=["y1", "u1"])
+
+    if len(df) < min_samples:
+        raise ValueError(
+            f"History CSV has only {len(df)} usable rows (need >= {min_samples}).\n"
+            "Re-run the simulation with a longer reference signal."
+        )
+
+    rows = []
+    for i, cols in enumerate(_ELECTRODES, start=1):
+        params = vrft_pid_from_csv_filtered(
+            csv_path=str(history_csv),
+            y_col=cols["y_col"],
+            u_col=cols["u_col"],
+            Ts=Ts,
+            tau=tau,
+            t=t,
+            q=q,
+            omega=omega,
+            warmup=warmup,
+        )
+        rows.append({"electrode": i, "kp": params.Kp, "ki": params.Ki, "kd": params.Kd})
+        print(f"  El{i}: Kp={params.Kp:.6f}  Ki={params.Ki:.6f}  Kd={params.Kd:.6f}")
+
+    result = pd.DataFrame(rows)
+
+    out_csv = Path(out_csv)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    result[["kp", "ki", "kd"]].to_csv(out_csv, index=False)
+    print(f"\nSaved tuned PID params → {out_csv}")
+
+    return result
 
 
 if __name__ == "__main__":
-    main()
-
+    print(f"Running VRFT on {HISTORY_CSV} ...")
+    run_vrft()

@@ -1,15 +1,22 @@
 from __future__ import annotations
- 
-from run_simulation.closed_loop.controllers.pid import (
-    PIDController,
-    load_pid_params_csv,
-)
+
+from run_simulation.closed_loop.controllers.mpc import LinearMPC, load_mpc_params_csv
 from run_simulation.closed_loop.controllers.open_loop import (
     OpenLoopController,
     load_open_loop_params_csv,
 )
- 
- 
+from run_simulation.closed_loop.controllers.pid import (
+    PIDController,
+    load_pid_params_csv,
+)
+
+
+def make_mpc_controller(config_path: str, bundle: dict) -> LinearMPC:
+    """Instantiate a LinearMPC from a params CSV and a loaded model bundle."""
+    params = load_mpc_params_csv(config_path)
+    return LinearMPC(params=params, bundle=bundle)
+
+
 def make_controllers(name: str, config_path: str, dt: float) -> list:
     """Instantiate a list of 3 controllers (one per electrode).
  
