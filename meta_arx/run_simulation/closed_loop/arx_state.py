@@ -2,84 +2,78 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from collections import Counter
 
 import numpy as np
 import pandas as pd
 from joblib import load
 
 
-@dataclass(frozen=True)
-class ModelIOConfig:
-    input_base: str
-    output_col: str
-    output_lag_base: str = "y_filt"
-
-
-def _lag_base(col: str) -> str | None:
-    if "_lag" not in col:
-        return None
-    return col.rsplit("_lag", 1)[0]
-
-
-def infer_model_io(bundle: dict, *, input_base: str | None = None, output_lag_base: str | None = None) -> ModelIOConfig:
-    x_cols: list[str] = bundle["X_cols"]
-    output_col: str = bundle["y_col"]
-
-    lag_bases = [_lag_base(col) for col in x_cols if _lag_base(col) is not None]
-    lag_bases = [base for base in lag_bases if base is not None]
-
-    if output_lag_base is None:
-        if "y_filt_lag1" in x_cols:
-            output_lag_base = "y_filt"
-        elif f"{output_col}_lag1" in x_cols:
-            output_lag_base = output_col
-        else:
-            output_lag_base = "y_filt"
-
-    if input_base is None:
-        counts = Counter(base for base in lag_bases if base != output_lag_base)
-        if not counts:
-            raise ValueError("Could not infer input_base from bundle['X_cols']")
-        input_base = counts.most_common(1)[0][0]
-
-    return ModelIOConfig(
-        input_base=input_base,
-        output_col=output_col,
-        output_lag_base=output_lag_base,
-    )
-
-
 @dataclass
 class ArxState:
+    """Lagged VARX state stored as a single pandas Series (row)."""
+
     row: pd.Series
-    io: ModelIOConfig
 
-    def current_y(self) -> float:
-        for col in (self.io.output_col, "y_target", f"{self.io.output_lag_base}_lag1"):
-            if col in self.row.index:
-                return float(self.row[col])
-        raise KeyError(
-            f"No {self.io.output_col}, y_target, or {self.io.output_lag_base}_lag1 in state"
-        )
+    def current_y(self, y_cols: list[str] | None = None) -> np.ndarray:
+        """Return current output vector.
 
-    def current_u(self) -> float:
-        lag_col = f"{self.io.input_base}_lag1"
-        if lag_col in self.row.index:
-            return float(self.row[lag_col])
-        if self.io.input_base in self.row.index:
-            return float(self.row[self.io.input_base])
-        return 0.0
+        For VARX-resistance this is [El1_Resistance_mOhm_filt, El2_Resistance_mOhm_filt, El3_Resistance_mOhm_filt].
+        Falls back to lag1 if non-lagged columns are not present.
+        """
+
+        if y_cols is None:
+            y_cols = ["El1_Resistance_mOhm_filt", "El2_Resistance_mOhm_filt", "El3_Resistance_mOhm_filt"]
+
+        vals: list[float] = []
+        for c in y_cols:
+            if c in self.row.index:
+                vals.append(float(self.row[c]))
+                continue
+
+            lag1 = f"{c}_lag1"
+            if lag1 in self.row.index:
+                vals.append(float(self.row[lag1]))
+                continue
+
+            raise KeyError(f"No '{c}' (or '{c}_lag1') found in state")
+
+        return np.asarray(vals, dtype=float)
+
+    def current_u(self, u_bases: list[str] | None = None) -> np.ndarray:
+        """Return current input vector from lag1 values.
+
+        Electrode positions: [El1_pos_m_filt, El2_pos_m_filt, El3_pos_m_filt].
+        """
+
+        if u_bases is None:
+            u_bases = ["El1_pos_m_filt", "El2_pos_m_filt", "El3_pos_m_filt"]
+
+        vals: list[float] = []
+        for base in u_bases:
+            lag1 = f"{base}_lag1"
+            if lag1 in self.row.index:
+                vals.append(float(self.row[lag1]))
+            elif base in self.row.index:
+                vals.append(float(self.row[base]))
+            else:
+                vals.append(0.0)
+
+        return np.asarray(vals, dtype=float)
 
     def predict_next_y(
         self,
         bundle: dict,
         clip_z: float = 10.0,
         fillna_with_mean: bool = True,
-    ) -> float:
+    ) -> np.ndarray:
+        """One-step prediction y(t) from current lagged row."""
+
         model = bundle["model"]
         x_scaler = bundle["X_scaler"]
-        y_scaler = bundle["y_scaler"]
+        y_scaler = bundle.get("Y_scaler", bundle.get("y_scaler"))
+        if y_scaler is None:
+            raise KeyError("Bundle missing Y_scaler (or legacy y_scaler)")
+
         x_cols: list[str] = bundle["X_cols"]
 
         x_raw = self.row.reindex(x_cols).to_numpy(dtype=float)[None, :]
@@ -90,15 +84,41 @@ class ArxState:
                 x_raw = np.nan_to_num(x_raw, nan=0.0)
 
         x_z = x_scaler.transform(x_raw)
-        y_z = np.clip(model.predict(x_z).reshape(-1, 1), -clip_z, clip_z)
-        return float(y_scaler.inverse_transform(y_z)[0, 0])
+        y_z = np.clip(model.predict(x_z), -clip_z, clip_z)
+        y = y_scaler.inverse_transform(y_z)
+        return y.reshape(-1)
 
-    def advance(self, u_new: float, y_new: float, max_lag: int = 5) -> None:
+    def advance(
+        self,
+        u_new: np.ndarray,
+        y_new: np.ndarray,
+        exog_new: dict[str, float] | None = None,
+    ) -> None:
+        """Advance all *_lagk columns by one step.
+
+        - Updates *_Resistance_mOhm_filt_lag* with y_new (vector)
+        - Updates *_pos_m_filt_lag* with u_new (vector)
+        - Updates any exogenous lag whose base name is in exog_new (e.g.
+          ``{"RMS_V_transformer_filt": 412.3}``)
+        - Freezes all other exogenous lags (voltages, currents, etc.)
+        """
+
+        u_new = np.asarray(u_new, dtype=float).reshape(-1)
+        y_new = np.asarray(y_new, dtype=float).reshape(-1)
+        exog_new = exog_new or {}
+
         lag_bases = sorted(col[:-5] for col in self.row.index if col.endswith("_lag1"))
 
         for base in lag_bases:
-            cols = [f"{base}_lag{k}" for k in range(1, max_lag + 1)]
-            cols = [c for c in cols if c in self.row.index]
+            cols: list[str] = []
+            k = 1
+            while True:
+                c = f"{base}_lag{k}"
+                if c not in self.row.index:
+                    break
+                cols.append(c)
+                k += 1
+
             if len(cols) < 2:
                 continue
 
@@ -106,44 +126,68 @@ class ArxState:
             new = np.empty_like(old)
             new[1:] = old[:-1]
 
-            if base == self.io.input_base:
-                new[0] = u_new
-            elif base == self.io.output_lag_base:
-                new[0] = y_new
+            if base.endswith("pos_m_filt"):
+                # electrode position -> driven by u_new
+                try:
+                    idx = int(base[2]) - 1
+                except Exception:
+                    idx = 0
+                new[0] = u_new[idx] if idx < len(u_new) else float(u_new[-1])
+
+            elif base.endswith("Resistance_mOhm_filt"):
+                # electrode resistance -> driven by y_new
+                try:
+                    idx = int(base[2]) - 1
+                except Exception:
+                    idx = 0
+                new[0] = y_new[idx] if idx < len(y_new) else float(y_new[-1])
+
+            elif base in exog_new:
+                # caller-supplied exogenous value (e.g. live voltage disturbance)
+                new[0] = float(exog_new[base])
+
             else:
+                # freeze all other exogenous signals
                 new[0] = old[0]
 
             self.row.loc[cols] = new
 
-        if self.io.input_base in self.row.index:
-            self.row[self.io.input_base] = u_new
-        if self.io.output_col in self.row.index:
-            self.row[self.io.output_col] = y_new
-        if "y_target" in self.row.index:
-            self.row["y_target"] = y_new
+        # keep non-lagged columns consistent if they exist
+        for i, base in enumerate(["El1_pos_m_filt", "El2_pos_m_filt", "El3_pos_m_filt"]):
+            if base in self.row.index and i < len(u_new):
+                self.row[base] = float(u_new[i])
+
+        for i, base in enumerate(["El1_Resistance_mOhm_filt", "El2_Resistance_mOhm_filt", "El3_Resistance_mOhm_filt"]):
+            if base in self.row.index and i < len(y_new):
+                self.row[base] = float(y_new[i])
 
 
 def load_arx_bundle(model_path: str) -> dict:
     bundle = load(model_path)
-    required = ["model", "X_scaler", "y_scaler", "X_cols", "y_col"]
-    missing = [k for k in required if k not in bundle]
-    if missing:
-        raise KeyError(f"ARX bundle is missing required keys: {missing}")
+
+    required_any = ["model", "X_scaler", "X_cols"]
+    missing_any = [k for k in required_any if k not in bundle]
+    if missing_any:
+        raise KeyError(f"Model bundle is missing required keys: {missing_any}")
+
+    has_varx = ("y_cols" in bundle) and ("Y_scaler" in bundle or "y_scaler" in bundle)
+    has_siso = ("y_col" in bundle) and ("y_scaler" in bundle or "Y_scaler" in bundle)
+
+    if not (has_varx or has_siso):
+        raise KeyError("Bundle must contain either (y_cols + Y_scaler) or (y_col + y_scaler)")
+
     return bundle
 
 
-def load_initial_state(
-    csv_path: str | Path,
-    bundle: dict,
-    idx: int | None = None,
-    *,
-    io_cfg: ModelIOConfig | None = None,
-) -> ArxState:
+def load_initial_state(csv_path: str | Path, bundle: dict, idx: int | None = None) -> ArxState:
     df = pd.read_csv(csv_path)
     x_cols: list[str] = bundle["X_cols"]
-    y_col: str = bundle["y_col"]
 
-    needed = x_cols + [y_col]
+    y_cols = bundle.get("y_cols")
+    if y_cols is None:
+        y_cols = [bundle["y_col"]]
+
+    needed = x_cols + list(y_cols)
     missing = [c for c in needed if c not in df.columns]
     if missing:
         raise ValueError(f"History CSV {csv_path} is missing required columns: {missing}")
@@ -153,6 +197,4 @@ def load_initial_state(
         raise ValueError(f"No valid (non-NaN) rows in {csv_path} for columns {needed}")
 
     row = df_valid.iloc[-1].copy() if idx is None else df.iloc[idx].copy()
-    if io_cfg is None:
-        io_cfg = infer_model_io(bundle)
-    return ArxState(row=row, io=io_cfg)
+    return ArxState(row=row)

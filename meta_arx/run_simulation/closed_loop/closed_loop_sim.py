@@ -6,28 +6,16 @@ from .arx_state import ArxState
 from .controller_api import Controller
 
 
+# Per-electrode actuator limits (shared across all electrodes for now)
+_DU_MAX = 0.01   # max position change per step [m]
+_U_MIN  = 0.1    # minimum electrode position   [m]
+_U_MAX  = 2.0    # maximum electrode position   [m]
+
+
 def apply_actuator_limits(u_des: float, u_prev: float) -> float:
-    """
-    Simple actuator model.
-
-    Limits:
-        - max movement per timestep
-        - absolute position bounds
-    """
-
-    du_max = 0.01   # max position change per step
-    u_min = 0    # minimum electrode position
-    u_max = 2.0    # maximum electrode position
-
-    # rate limit
-    du = u_des - u_prev
-    du = np.clip(du, -du_max, du_max)
-
-    u = u_prev + du
-
-    # position saturation
-    u = np.clip(u, u_min, u_max)
-
+    """Simple actuator model: rate-limit then position-saturate."""
+    du = np.clip(u_des - u_prev, -_DU_MAX, _DU_MAX)
+    u = np.clip(u_prev + du, _U_MIN, _U_MAX)
     return float(u)
 
 
@@ -35,43 +23,138 @@ def run_closed_loop(
     model: dict,
     state: ArxState,
     reference: np.ndarray,
-    controller: Controller,
+    controllers: list[Controller],
+    exog_traj: dict[str, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run closed-loop simulation for a 3-output VARX model.
+
+    Args:
+        model:       trained bundle (must contain y_cols, X_cols, scalers, model)
+        state:       ArxState initialised from history CSV
+        reference:   shape ``(n,)`` (broadcast to all 3 electrodes) or ``(n, 3)``
+        controllers: list of 3 Controller instances (one per electrode)
+        exog_traj:   optional dict of exogenous signal trajectories, e.g.
+                     ``{"RMS_V_transformer_filt": np.array([...])}`` of length n.
+                     Each signal is passed into advance() at every timestep so the
+                     disturbance is live during simulation rather than frozen.
+
+    Returns:
+        y: ``(n+1, 3)`` predicted outputs   [mΩ]
+        u: ``(n,   3)`` commanded positions [m]
+        e: ``(n,   3)`` control errors      [mΩ]
+    """
 
     reference = np.asarray(reference, dtype=float)
-    n = len(reference)
+    if reference.ndim == 1:
+        reference = np.repeat(reference.reshape(-1, 1), 3, axis=1)
+    if reference.shape[1] != 3:
+        raise ValueError(f"reference must have 3 columns, got shape {reference.shape}")
 
-    y = np.zeros(n + 1)
-    u = np.zeros(n)
-    e = np.zeros(n)
+    n = reference.shape[0]
 
-    y[0] = state.current_y()
+    y = np.zeros((n + 1, 3), dtype=float)
+    u = np.zeros((n,     3), dtype=float)
+    e = np.zeros((n,     3), dtype=float)
+
+    y_cols = model.get("y_cols") or [model.get("y_col")]
+    y[0] = state.current_y(y_cols=y_cols)
     u_prev = state.current_u()
 
-    controller.reset()
+    if len(controllers) != 3:
+        raise ValueError(f"Expected 3 controllers, got {len(controllers)}")
+
+    for c in controllers:
+        c.reset()
 
     for k in range(n):
-
-        # plant prediction
         y_pred = state.predict_next_y(model)
 
-        # controller proposes position
-        u_des, e_k = controller.step(
-            reference=reference[k],
-            y_pred=y_pred,
-            u_prev=u_prev,
-        )
+        u_cmd = np.zeros(3, dtype=float)
+        for i in range(3):
+            u_des, e[k, i] = controllers[i].step(
+                reference=float(reference[k, i]),
+                y_pred=float(y_pred[i]),
+                u_prev=float(u_prev[i]),
+            )
+            u_cmd[i] = apply_actuator_limits(u_des, float(u_prev[i]))
 
-        # actuator limits applied here
-        u_k = apply_actuator_limits(u_des, u_prev)
-
-        # advance plant
-        state.advance(u_new=u_k, y_new=y_pred)
-
+        u[k] = u_cmd
         y[k + 1] = y_pred
-        u[k] = u_k
-        e[k] = e_k
 
-        u_prev = u_k
+        # Build exog snapshot for this timestep if a trajectory was provided
+        exog_k: dict[str, float] | None = None
+        if exog_traj:
+            exog_k = {sig: float(traj[k]) for sig, traj in exog_traj.items()}
+
+        state.advance(u_new=u_cmd, y_new=y_pred, exog_new=exog_k)
+        u_prev = u_cmd
+
+    return y, u, e
+
+
+def run_mpc_closed_loop(
+    model: dict,
+    state: ArxState,
+    reference: np.ndarray,
+    mpc,
+    exog_traj: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run closed-loop simulation with a MIMO MPC controller.
+
+    Unlike ``run_closed_loop``, a single MPC instance handles all 3 electrodes
+    jointly, exploiting cross-coupling information in the VARX model.
+
+    Args:
+        model:     trained bundle (y_cols, X_cols, scalers, model)
+        state:     ArxState initialised from history CSV
+        reference: ``(n,)`` broadcast or ``(n, 3)`` per-electrode reference [mΩ]
+        mpc:       ``LinearMPC`` instance
+        exog_traj: optional exogenous signal trajectories of length n
+
+    Returns:
+        y: ``(n+1, 3)`` predicted outputs   [mΩ]
+        u: ``(n,   3)`` commanded positions [m]
+        e: ``(n,   3)`` tracking errors     [mΩ]
+    """
+    reference = np.asarray(reference, dtype=float)
+    if reference.ndim == 1:
+        reference = np.repeat(reference.reshape(-1, 1), 3, axis=1)
+    if reference.shape[1] != 3:
+        raise ValueError(f"reference must have 3 columns, got {reference.shape}")
+
+    n = reference.shape[0]
+    N = mpc.params.N
+
+    y = np.zeros((n + 1, 3), dtype=float)
+    u = np.zeros((n,     3), dtype=float)
+    e = np.zeros((n,     3), dtype=float)
+
+    y_cols = model.get("y_cols") or [model.get("y_col")]
+    y[0] = state.current_y(y_cols=y_cols)
+    u_prev = state.current_u()
+
+    mpc.reset()
+
+    for k in range(n):
+        y_pred = state.predict_next_y(model)
+
+        ref_window = reference[k : k + N]          # (≤N, 3); MPC pads internally
+
+        u_des, _ = mpc.step(ref_window, state, u_prev)
+
+        u_cmd = np.zeros(3, dtype=float)
+        for i in range(3):
+            u_cmd[i] = apply_actuator_limits(u_des[i], float(u_prev[i]))
+
+        u[k] = u_cmd
+        y[k + 1] = y_pred
+        e[k] = reference[k] - y_pred
+
+        exog_k: dict[str, float] | None = None
+        if exog_traj:
+            exog_k = {sig: float(traj[k]) for sig, traj in exog_traj.items()}
+
+        state.advance(u_new=u_cmd, y_new=y_pred, exog_new=exog_k)
+        u_prev = u_cmd
 
     return y, u, e
