@@ -60,8 +60,8 @@ A = 2     # Amplitude of random data generation. Effectively a hyperparameter.
 # omega/(omega+s)
 omega=0.1 # Cutoff frequency in the frequency weighting function
 
-testing = True # Runs the Simulator at the end of the script with the new controller if True.
-# NOTE: Testing must be set to false if q>3, due to lack of initial conditions.
+testing = False # Runs the Simulator at the end of the script with the new controller if True.
+# NOTE: Testing runs without initial conditions for now.
 
 # No need to interact with anything else in this script for simple tuning. Some functions defined below may be usefull however.
 #%%
