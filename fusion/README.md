@@ -30,11 +30,29 @@ gp_el2_pi_512.pt
 gp_el3_pi_512.pt
 ```
 
+**Variant `combined_deep_512`**
+```
+arx_joint_combined_v3.joblib
+gp_el1_combined_deep_512.pt
+gp_el2_combined_deep_512.pt
+gp_el3_combined_deep_512.pt
+```
+
+**Variant `combined_512`**
+```
+arx_joint_combined_v3.joblib
+gp_el1_combined_512.pt
+gp_el2_combined_512.pt
+gp_el3_combined_512.pt
+```
+
 To switch variants, change `_GP_VARIANT` at the top of `run_closed_loop.py` — the matching ARX is selected automatically:
 
 ```python
-_GP_VARIANT = "txt2026_512"   # 2026 txt data
-_GP_VARIANT = "pi_512"        # PI data middle-80%
+_GP_VARIANT = "txt2026_512"            # 2026 txt data
+_GP_VARIANT = "pi_512"                 # PI data middle-80%
+_GP_VARIANT = "combined_deep_512"      # ARX trained on PI + txt combined, deep kernel
+_GP_VARIANT = "combined_512"           # ARX trained on PI + txt combined, Matern32 kernel
 ```
 
 ---

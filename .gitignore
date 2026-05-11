@@ -31,6 +31,4 @@ data/interim/
 *.json
 *.xlsx
 *.log
-
-*.joblib
 *.meta

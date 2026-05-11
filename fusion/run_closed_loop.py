@@ -70,22 +70,28 @@ from .training.gp_loader import load_gp_bundle, predict_single
 # MODEL SELECTION -- change _GP_VARIANT to switch between the two plant models.
 # Each variant bundles a matched ARX + GP pair trained on the same dataset.
 # =============================================================================
-_GP_VARIANT = "txt2026_512"   # or "pi_512"
+_GP_VARIANT = "combined_deep_512"   # "pi_512" | "txt2026_512" | "combined_deep_512"
 
 # ARX model paired with each GP variant (do not change unless you retrain):
 _ARX_FOR_VARIANT = {
-    "txt2026_512": "arx_joint_txt2026.joblib",  # ARX trained on 2026 txt data
-    "pi_512":      "arx_joint_pi_v3.joblib",    # ARX trained on PI data
+    "txt2026_512":      "arx_joint_txt2026.joblib",     # ARX trained on 2026 txt data
+    "pi_512":           "arx_joint_pi_v3.joblib",       # ARX trained on PI data
+    "combined_deep_512":"arx_joint_combined_v3.joblib", # ARX trained on PI + txt combined, deep kernel
+    "combined_512":     "arx_joint_combined_v3.joblib", # ARX trained on PI + txt combined, Matern32 kernel
 }
 _ARX_MODEL = _ARX_FOR_VARIANT[_GP_VARIANT]
 # =============================================================================
 
-# Typical SAF operating point used to seed the initial simulator state
-_TYPICAL_POS  = 1.04    # electrode position (m)
-_TYPICAL_R    = 1.006   # arc resistance (mOhm)
-_TYPICAL_KA   = 65.0    # arc current (kA)
-_TYPICAL_REAC = 0.82    # arc reactance (mOhm)
-_TYPICAL_V    = 165.0   # transformer RMS voltage (V)
+# Typical SAF operating point used to seed the initial simulator state.
+# Per-electrode R values come from a stable rule-controller run — the three
+# electrodes sit at different resistances in steady state.
+_TYPICAL_POS    = 1.04
+_TYPICAL_R      = 1.006   # fallback scalar (not used for multi-electrode init)
+_TYPICAL_KA     = 65.0
+_TYPICAL_REAC   = 0.82
+_TYPICAL_V      = 165.0
+_TYPICAL_POS_BY_EL = {1: 1.04,  2: 1.03,  3: 1.04}
+_TYPICAL_R_BY_EL   = {1: 1.20,  2: 0.77,  3: 1.14}
 
 
 def _load_reference(path: str | Path) -> np.ndarray:
@@ -116,7 +122,7 @@ def _build_sim_and_gps() -> tuple[SaFSimulator, dict]:
     """
     Load the joint ARX model and per-electrode GP bundles.
 
-    Returns (sim, gp_bundles) where gp_bundles is a dict {1: bundle, 2: ..., 3: ...}.
+    Returns (sim, gp_bundles) where gp_bundles is a dict {1: bundle, 2:..., 3:...}.
     Missing GP files are skipped; those electrodes run on ARX only.
     """
     import __main__
@@ -152,6 +158,13 @@ def _build_sim_and_gps() -> tuple[SaFSimulator, dict]:
         v          = _TYPICAL_V,
         arx_bundle = arx,
     )
+
+    # Override per-electrode R and position lags so each electrode starts at
+    # its natural equilibrium rather than an identical symmetric value.
+    for _i in (1, 2, 3):
+        for _lag in (1, 2, 3):
+            init_row[f"El{_i}_y_filt_lag{_lag}"]  = _TYPICAL_R_BY_EL[_i]
+            init_row[f"El{_i}_pos_m_lag{_lag}"]    = _TYPICAL_POS_BY_EL[_i]
 
     sim = SaFSimulator(arx, init_row, electrode=1)
 
@@ -251,7 +264,7 @@ def run_closed_loop_from_config(
     e      = np.zeros((n,     3))   # controller errors
 
     plant_cache: dict = {}
-    u_prev = np.full(3, _TYPICAL_POS)
+    u_prev = np.array([_TYPICAL_POS_BY_EL[i] for i in (1, 2, 3)])
 
     # Seed y[0] from current simulator state
     sim._electrode = 1
@@ -292,9 +305,9 @@ def run_closed_loop_from_config(
             sim.advance_multi(u_new_vec=u_new, y_new_vec=y_arx_vec)
 
         for i in (1, 2, 3):
-            y[k + 1, i - 1]         = y_pred[i]
-            plant_cache[f"r{i}_lag2"] = plant_cache.get(f"r{i}", y_pred[i])
-            plant_cache[f"r{i}"]      = y_pred[i]
+            y[k + 1, i - 1]           = y_pred[i]
+            plant_cache[f"r{i}_lag2"] = plant_cache.get(f"r{i}", y_arx_vec[i])
+            plant_cache[f"r{i}"]      = y_arx_vec[i]
 
         u_prev = np.array([u_new[i] for i in (1, 2, 3)])
 
