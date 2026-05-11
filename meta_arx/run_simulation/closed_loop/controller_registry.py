@@ -5,11 +5,18 @@ from run_simulation.closed_loop.controllers.open_loop import (
     OpenLoopController,
     load_open_loop_params_csv,
 )
+from run_simulation.closed_loop.controllers.open_loop_velocity import (
+    OpenLoopVelocityController,
+    load_open_loop_velocity_params_csv,
+)
 from run_simulation.closed_loop.controllers.pid import (
     PIDController,
     load_pid_params_csv,
 )
-
+from run_simulation.closed_loop.controllers.generalized_controller import (
+    GeneralizedController,
+    load_generalized_params_csv,
+)
 
 def make_mpc_controller(config_path: str, bundle: dict) -> LinearMPC:
     """Instantiate a LinearMPC from a params CSV and a loaded model bundle."""
@@ -37,5 +44,13 @@ def make_controllers(name: str, config_path: str, dt: float) -> list:
     if key == "open_loop":
         params_list = load_open_loop_params_csv(config_path)
         return [OpenLoopController(params=p, dt=dt) for p in params_list]
+    
+    if key == "open_loop_velocity":
+        params_list = load_open_loop_velocity_params_csv(config_path)
+        return [OpenLoopVelocityController(params=p, dt=dt) for p in params_list]
+    
+    if key == "generalized_controller":
+        params_list = load_generalized_params_csv(config_path)
+        return [GeneralizedController(params=p, dt=dt) for p in params_list]
  
     raise ValueError(f"Unknown controller type: '{name}'. Valid options: 'pid', 'open_loop'")
