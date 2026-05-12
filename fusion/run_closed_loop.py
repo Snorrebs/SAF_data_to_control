@@ -189,13 +189,13 @@ def _gp_corrected_r(
     electrode:   int,
     plant_cache: dict,
     step:        int,
-) -> float:
-    """Return GP-corrected R prediction for one electrode."""
+) -> tuple[float, float]:
+    """Return (R_corrected, gp_variance) for one electrode."""
     sim._electrode = electrode
     y_arx = sim._predict_r(electrode)
     bun   = gp_bundles.get(electrode)
     if bun is None:
-        return y_arx
+        return y_arx, 0.0
 
     feats = sim.get_gp_features_electrode(electrode)
     feats["step_in_window"] = float(min(step, 19))
@@ -204,10 +204,10 @@ def _gp_corrected_r(
     feats["y_real_lag1"]    = plant_cache.get(f"r{electrode}",      y_arx)
     feats["y_real_lag2"]    = plant_cache.get(f"r{electrode}_lag2", y_arx)
 
-    x      = np.array([feats.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
-    mu, _  = predict_single(bun, x)
-    mu     = float(np.clip(mu, -0.15, 0.15))
-    return float(y_arx + mu)
+    x        = np.array([feats.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
+    mu, var  = predict_single(bun, x)
+    mu       = float(np.clip(mu, -0.15, 0.15))
+    return float(y_arx + mu), float(var)
 
 
 def run_closed_loop_from_config(
@@ -258,18 +258,23 @@ def run_closed_loop_from_config(
     for c in controllers:
         c.reset()
 
-    n      = len(reference)
-    y      = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
-    u      = np.zeros((n,     3))   # position commands (m)
-    e      = np.zeros((n,     3))   # controller errors
+    n           = len(reference)
+    y           = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
+    gp_var_arr  = np.zeros((n + 1, 3))   # GP predictive variance per electrode
+    u           = np.zeros((n,     3))   # position commands (m)
+    e           = np.zeros((n,     3))   # controller errors
+    state_list: list[dict] = []          # sim._row snapshot per timestep
 
     plant_cache: dict = {}
     u_prev = np.array([_TYPICAL_POS_BY_EL[i] for i in (1, 2, 3)])
 
     # Seed y[0] from current simulator state
     sim._electrode = 1
+    state_list.append(dict(sim._row))
     for i in (1, 2, 3):
-        y[0, i - 1] = _gp_corrected_r(sim, gp_bundles, i, plant_cache, step=0)
+        y[0, i - 1], gp_var_arr[0, i - 1] = _gp_corrected_r(
+            sim, gp_bundles, i, plant_cache, step=0
+        )
         plant_cache[f"r{i}"]      = y[0, i - 1]
         plant_cache[f"r{i}_lag2"] = y[0, i - 1]
     sim._electrode = 1
@@ -278,9 +283,12 @@ def run_closed_loop_from_config(
         plant_cache["step"] = k
 
         # 1. Predict R one step ahead (ARX + GP) for all three electrodes
-        y_pred = {}
+        y_pred:   dict = {}
+        gp_var_k: dict = {}
         for i in (1, 2, 3):
-            y_pred[i] = _gp_corrected_r(sim, gp_bundles, i, plant_cache, step=k)
+            y_pred[i], gp_var_k[i] = _gp_corrected_r(
+                sim, gp_bundles, i, plant_cache, step=k
+            )
 
         sim._electrode = 1
 
@@ -304,8 +312,11 @@ def run_closed_loop_from_config(
             warnings.simplefilter("ignore")
             sim.advance_multi(u_new_vec=u_new, y_new_vec=y_arx_vec)
 
+        state_list.append(dict(sim._row))
+
         for i in (1, 2, 3):
             y[k + 1, i - 1]           = y_pred[i]
+            gp_var_arr[k + 1, i - 1]  = gp_var_k[i]
             plant_cache[f"r{i}_lag2"] = plant_cache.get(f"r{i}", y_arx_vec[i])
             plant_cache[f"r{i}"]      = y_arx_vec[i]
 
@@ -314,6 +325,8 @@ def run_closed_loop_from_config(
     t   = np.arange(n + 1) * dt
     u0  = np.full(3, _TYPICAL_POS)
     ref = np.vstack([np.full((1, 3), np.nan), reference])  # prepend NaN row
+
+    state_df = pd.DataFrame(state_list)
 
     out = pd.DataFrame({
         "t_s": t,
@@ -326,7 +339,11 @@ def run_closed_loop_from_config(
         "e2":  np.r_[np.nan, e[:, 1]],
         "e3":  np.r_[np.nan, e[:, 2]],
         "v_transformer": np.full(n + 1, _TYPICAL_V),
+        "gp_var1": gp_var_arr[:, 0],
+        "gp_var2": gp_var_arr[:, 1],
+        "gp_var3": gp_var_arr[:, 2],
     })
+    out = pd.concat([out, state_df.reset_index(drop=True)], axis=1)
 
     out_csv = Path(out_csv)
     if not out_csv.is_absolute():

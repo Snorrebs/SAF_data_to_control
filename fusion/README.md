@@ -81,7 +81,7 @@ run_closed_loop_from_config(
 )
 ```
 
-**Output CSV columns:**
+**Output CSV columns (66 total):**
 
 | Column | Description |
 |---|---|
@@ -91,50 +91,53 @@ run_closed_loop_from_config(
 | `u1`, `u2`, `u3` | electrode position commands (m) |
 | `e1`, `e2`, `e3` | controller error (reference - y_pred) |
 | `v_transformer` | transformer RMS voltage (V) |
+| `gp_var1`, `gp_var2`, `gp_var3` | GP predictive variance per electrode (mOhm²) — see note below |
+| `El{1,2,3}_y_filt_lag{1,2,3}` | ARX resistance lag registers per electrode |
+| `El{1,2,3}_kA_filt_lag{1,2,3}` | ARX current lag registers per electrode |
+| `El{1,2,3}_CalcReac_filt_lag{1,2,3}` | ARX reactance lag registers per electrode |
+| `El{1,2,3}_pos_m_lag{1,2,3}` | ARX position lag registers per electrode |
+| `El{1,2,3}_dpos_mps_filt_lag{1,2,3}` | ARX velocity lag registers per electrode |
+| `RMS_V_transformer_filt_lag1` | ARX transformer voltage lag register |
+| `TCA`, `TCB`, `TCC` | tap changer positions |
+
+> **GP posterior variance** (`gp_var1/2/3`): the variance of the GP correction term at each step, in mOhm².
+> Take `sqrt(gp_var)` to get the one-sigma uncertainty on the GP correction (e.g. var=0.004 → ±0.063 mOhm).
+> A rising variance indicates the simulator is moving out of the GP's training distribution — the ARX prediction is being trusted more and the GP correction less.
+> Columns are placed after `v_transformer`; scroll right in Excel to find them.
 
 **Reference CSV format:** columns `r1`, `r2`, `r3` for per-electrode references, or a single `reference` column broadcast to all three.
 
 ---
 
-## Accessing GP mean and uncertainty directly
+## Using from VRFT v5.py
+
+Change one import line in `VRFT v5.py`:
 
 ```python
-import sys, os
-sys.path.insert(0, r"C:\path\to\SAF_data_to_control")
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# Old:
+from run_simulation.scripts.run_closed_loop import run_closed_loop_from_config
 
-import joblib
-from fusion.simulators.saf_simulator import SaFSimulator, build_init_row_from_scalars
-from fusion.simulators.plant import Plant
-from fusion.training.gp_loader import load_gp_bundle
-
-arx = joblib.load(r"fusion/models/arx_joint_txt2026.joblib")
-gp  = load_gp_bundle(r"fusion/models/gp_el1_txt2026_512.pt")
-
-row = build_init_row_from_scalars(
-    pos=1.04, r=1.006, ka=65.0, rx=0.82, v=165.0,
-    arx_bundle=arx, electrode=1,
-)
-
-sim   = SaFSimulator(arx, row, electrode=1)
-plant = Plant(sim, gp, clip_delta=0.15)
-
-for step in range(100):
-    y_pred = plant.predict_next_y()
-    correction  = plant.gp_mean   # additive GP correction (mOhm)
-    uncertainty = plant.gp_std    # one-sigma uncertainty (mOhm)
-    plant.advance(u_new=1.04, y_new=y_pred)
+# New:
+from fusion.run_closed_loop import run_closed_loop_from_config
 ```
 
-Pass `gp_bundle=None` to run on ARX only:
-
-```python
-plant = Plant(sim, gp_bundle=None)
-```
+Everything else stays the same. The output CSV will now include `gp_var1/2/3` and all ARX state columns.
 
 ---
 
-## Rule-based controller example
+## PID example
+
+`example_pid_simulation.py` runs a 300-step closed-loop step-response for all three electrodes. Run from `SAF_data_to_control/`:
+
+```
+python fusion/example_pid_simulation.py
+```
+
+Outputs to `fusion/results/example_pid/`: `closed_loop_result.csv`, `resistance.pdf`, `positions.pdf`.
+
+---
+
+## Other controller examples
 
 `example_rule_controller.py` simulates the real plant's R deadband step controller for all three electrodes. Run from `SAF_data_to_control/`:
 
