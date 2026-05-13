@@ -68,12 +68,35 @@ class ArxState:
     ) -> np.ndarray:
         """One-step prediction y(t) from current lagged row."""
 
-        model = bundle["model"]
-        x_scaler = bundle["X_scaler"]
         y_scaler = bundle.get("Y_scaler", bundle.get("y_scaler"))
         if y_scaler is None:
             raise KeyError("Bundle missing Y_scaler (or legacy y_scaler)")
 
+        # VARX bundle: per-equation models, each with their own scaler and
+        # column list — no custom wrapper class, no pickle issues.
+        if "models" in bundle and "X_scalers" in bundle and "X_cols_per_eq" in bundle:
+            models      = bundle["models"]
+            x_scalers   = bundle["X_scalers"]
+            x_col_lists = bundle["X_cols_per_eq"]
+
+            y_z = np.zeros(3)
+            for ei in range(3):
+                cols  = x_col_lists[ei]
+                x_raw = self.row.reindex(cols).to_numpy(dtype=float)[None, :]
+                if np.isnan(x_raw).any():
+                    if fillna_with_mean:
+                        x_raw = np.where(np.isnan(x_raw),
+                                         x_scalers[ei].mean_[None, :], x_raw)
+                    else:
+                        x_raw = np.nan_to_num(x_raw, nan=0.0)
+                x_z     = x_scalers[ei].transform(x_raw)
+                y_z[ei] = float(np.clip(models[ei].predict(x_z), -clip_z, clip_z))
+
+            return (y_z * y_scaler.scale_ + y_scaler.mean_).reshape(-1)
+
+        # Legacy SISO / single-scaler bundle fallback
+        model    = bundle["model"]
+        x_scaler = bundle["X_scaler"]
         x_cols: list[str] = bundle["X_cols"]
 
         x_raw = self.row.reindex(x_cols).to_numpy(dtype=float)[None, :]
@@ -85,7 +108,7 @@ class ArxState:
 
         x_z = x_scaler.transform(x_raw)
         y_z = np.clip(model.predict(x_z), -clip_z, clip_z)
-        y = y_scaler.inverse_transform(y_z)
+        y   = y_scaler.inverse_transform(y_z)
         return y.reshape(-1)
 
     def advance(
@@ -165,10 +188,13 @@ class ArxState:
 def load_arx_bundle(model_path: str) -> dict:
     bundle = load(model_path)
 
-    required_any = ["model", "X_scaler", "X_cols"]
-    missing_any = [k for k in required_any if k not in bundle]
-    if missing_any:
-        raise KeyError(f"Model bundle is missing required keys: {missing_any}")
+    has_new_varx = all(k in bundle for k in ["models", "X_scalers", "X_cols_per_eq"])
+    has_legacy   = all(k in bundle for k in ["model", "X_scaler", "X_cols"])
+    if not (has_new_varx or has_legacy):
+        raise KeyError(
+            "Bundle must contain either ('models' + 'X_scalers' + 'X_cols_per_eq') "
+            "or legacy ('model' + 'X_scaler' + 'X_cols')"
+        )
 
     has_varx = ("y_cols" in bundle) and ("Y_scaler" in bundle or "y_scaler" in bundle)
     has_siso = ("y_col" in bundle) and ("y_scaler" in bundle or "Y_scaler" in bundle)

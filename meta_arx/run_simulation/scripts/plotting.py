@@ -32,9 +32,9 @@ def main(path: str | Path) -> None:
         y = df[["y1", "y2", "y3"]]
     else:
         raise KeyError("Could not find resistance columns to plot.")
-
-    if all(c in df.columns for c in ["u1", "u2", "u3"]):
-        u = df[["u1", "u2", "u3"]]
+    # t_s,y1,y2,y3,r1,r2,r3,du1,du2,du3,u1_cumsum,u2_cumsum,u3_cumsum,e1,e2,e3,kA1,kA2,kA3
+    if all(c in df.columns for c in ["du1", "du2", "du3"]):
+        u = df[["du1", "du2", "du3"]]
     elif "u_cmd" in df.columns:
         u = pd.DataFrame({"u1": df["u_cmd"]})
     else:
@@ -65,7 +65,7 @@ def main(path: str | Path) -> None:
     if u is not None:
         for col in u.columns:
             axs[1].plot(t, u[col], lw=2, label=col)
-        axs[1].set_ylabel("Electrode position [m]")
+        axs[1].set_ylabel("Electrode speed [m/s]")
         axs[1].legend(ncol=3)
         axs[1].grid(True, alpha=0.3)
     else:
@@ -83,14 +83,24 @@ def main(path: str | Path) -> None:
         axs[2].text(0.5, 0.5, "No error columns found", ha="center", va="center")
         axs[2].axis("off")
 
-    # --- Voltage disturbance plot ---
-    if "v_transformer" in df.columns:
+    # --- Disturbance plot ---
+    # run_mpc.py writes kA1, kA2, kA3; run_closed_loop.py writes v_transformer
+    ka_cols = [c for c in ["kA1", "kA2", "kA3"] if c in df.columns]
+    if ka_cols:
+        colors = ["steelblue", "darkorange", "forestgreen"]
+        for col, color in zip(ka_cols, colors):
+            axs[3].plot(t, df[col], lw=1.5, color=color, label=col)
+        axs[3].set_ylabel("Current [kA]")
+        axs[3].legend(ncol=3)
+        axs[3].grid(True, alpha=0.3)
+    elif "v_transformer" in df.columns:
         axs[3].plot(t, df["v_transformer"], lw=1.5, color="steelblue", label="V transformer")
         axs[3].set_ylabel("Voltage [V]")
         axs[3].legend()
         axs[3].grid(True, alpha=0.3)
     else:
-        axs[3].text(0.5, 0.5, "No voltage disturbance column found", ha="center", va="center")
+        axs[3].text(0.5, 0.5, "No disturbance column found (expected kA1/kA2/kA3 or v_transformer)",
+                    ha="center", va="center", fontsize=9)
         axs[3].axis("off")
 
     axs[3].set_xlabel("Time [s]")
