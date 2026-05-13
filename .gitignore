@@ -34,3 +34,6 @@ data/interim/
 
 *.joblib
 *.meta
+
+*.txt
+
