@@ -51,6 +51,6 @@ def make_controllers(name: str, config_path: str, dt: float) -> list:
     
     if key == "generalized_controller":
         params_list = load_generalized_params_csv(config_path)
-        return [GeneralizedController(params=p, dt=dt) for p in params_list]
+        return GeneralizedController(params=params_list, dt=dt)
  
     raise ValueError(f"Unknown controller type: '{name}'. Valid options: 'pid', 'open_loop'")
