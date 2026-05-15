@@ -70,7 +70,7 @@ from .training.gp_loader import load_gp_bundle, predict_single
 # MODEL SELECTION -- change _GP_VARIANT to switch between the two plant models.
 # Each variant bundles a matched ARX + GP pair trained on the same dataset.
 # =============================================================================
-_GP_VARIANT = "combined_deep_512"   # "pi_512" | "txt2026_512" | "combined_deep_512"
+_GP_VARIANT = "txt2026_512"   # "pi_512" | "txt2026_512" | "combined_deep_512"
 
 # ARX model paired with each GP variant (do not change unless you retrain):
 _ARX_FOR_VARIANT = {
@@ -255,9 +255,14 @@ def run_closed_loop_from_config(
 
     sim, gp_bundles = _build_sim_and_gps()
     reference       = _load_reference(ref_csv)          # (n, 3)
-    for c in controllers:
-        c.reset()
-
+    
+# Small change to allow unified controller: MARKUS_TEST_CODE
+    if controller_name != "generalized_controller":
+        for c in controllers:
+            c.reset()
+        else:
+            controllers[0].reset()
+# End change
     n           = len(reference)
     y           = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
     gp_var_arr  = np.zeros((n + 1, 3))   # GP predictive variance per electrode
@@ -293,19 +298,38 @@ def run_closed_loop_from_config(
         sim._electrode = 1
 
         # 2. Each controller computes its desired electrode position
-        u_new: dict = {}
-        for i in (1, 2, 3):
-            u_des, e_k = controllers[i - 1].step(
-                reference = reference[k, i - 1],
-                y_pred    = y_pred[i],
-                u_prev    = u_prev[i - 1],
-            )
-            # 3. Clip the position command to actuator limits (speed, range)
-            u_ki          = apply_actuator_limits(u_des, u_prev[i - 1])
-            u_new[i]      = u_ki
-            u[k, i - 1]  = u_ki
-            e[k, i - 1]  = e_k
 
+# Test fuunction for unified multielectrode controller. MARKUS_TEST_CODE
+        if controller_name == "generalized_controller":
+            # 2.1. Unified controller output
+            u_new: dict = {}
+
+            u_des, e_k = controllers.step(
+                reference = reference[k],
+                y_pred    = y_pred,
+                u_prev    = u_prev
+            )
+            #3.1. Clip the position command to actuator limits (speed, range)
+
+            for i in (1,2,3):
+                u_ki = apply_actuator_limits(u_des[i-1], u_prev[i - 1])
+                u_new[i]      = u_ki
+                u[k, i - 1]   = u_ki
+            e[k]  = e_k
+        else:
+            u_new: dict = {}
+            for i in (1, 2, 3):
+                u_des, e_k = controllers[i - 1].step(
+                    reference = reference[k, i - 1],
+                    y_pred    = y_pred[i],
+                    u_prev    = u_prev[i - 1],
+                    )
+                # 3. Clip the position command to actuator limits (speed, range)
+                u_ki          = apply_actuator_limits(u_des, u_prev[i - 1])
+                u_new[i]      = u_ki
+                u[k, i - 1]  = u_ki
+                e[k, i - 1]  = e_k
+# End test.
         # 4. Advance the simulator to the next time step
         y_arx_vec = {i: sim._predict_r(i) for i in (1, 2, 3)}
         with warnings.catch_warnings():

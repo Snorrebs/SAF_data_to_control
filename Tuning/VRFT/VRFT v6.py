@@ -1,16 +1,18 @@
-# VRFT v5; implemented spectral power component and improved integration with simulator.
-# Run script to optimise PID parameters. The script deploys kp, ki and kd to PID_params.csv, 
+# Run script to optimise PID parameters. The script deploys kp, ki and kd for each electrode to PID_params.csv, 
 # and generates a 200s 1.2mOhm reference signal.
 # The script also generates an open_loop_params.csv file.
 import numpy as np
 from scipy.signal import lfilter
 from numpy.linalg import lstsq
 from scipy import signal
+from scipy.linalg import block_diag
 
 import scipy as sp
 import sympy as sm
 import pandas as pd
 import matplotlib.pyplot as plt
+import pysindy as ps
+
 
 import os
 from pathlib import Path 
@@ -30,14 +32,17 @@ project_root = VRFTuning.parent.parent.parent
 # Path to meta_arx
 module_path = project_root / "meta_arx"
 
+# Path to fusion
+fusion_path = project_root / "fusion"
+
 # Move working directory to meta_arx
-os.chdir(module_path)
+os.chdir(project_root)
 # Insert new working directory into PATH; known issue in Vscode
 if str(module_path) not in sys.path:
     sys.path.insert(0,str(module_path))
 
-from run_simulation.scripts.run_closed_loop import run_closed_loop_from_config
-
+from fusion.run_closed_loop import run_closed_loop_from_config
+os.chdir(module_path)
 #%%
 # ----------------------------
 # Define hyperparameters
@@ -89,12 +94,13 @@ def W_cont_to_disc(omega,Ts):
 
 # Construct phi^-1/2. Use a linear fit; will be improved in the future.
 def construct_phi(u):
-    f, pxx = sp.signal.welch(u)
-    G = [] # Initialise phi^-1/2
-    for i in pxx:
-        G.append(1/np.sqrt(i))
+    # f, pxx = sp.signal.welch(u)
+    # G = [] # Initialise phi^-1/2
+    # for i in pxx:
+    #     G.append(1/np.sqrt(i))
     # Phi_inv_num = np.polyfit(f,G,1) # Fit a linear curve to G
-    Phi_inv_num = [1] # seems to work either way.
+    # For now ignore the spectral power component
+    Phi_inv_num = [1] 
     Phi_inv_den = [1] 
     return Phi_inv_num, Phi_inv_den
 
@@ -142,9 +148,9 @@ def GetFilterCoeff(num,den,lp_num,lp_den,Phi_inv_num,Phi_inv_den):
 # -----------------------------
 
 # The following function is a reference generator with some options.
-def generate_reference(N,method = "linear",amp = 2):
+def generate_reference(N,method = "linear",amp = 2,ss = 1.2):
     if method == "linear":
-        r=1.2*np.ones(N)
+        r=ss*np.ones(N)
     if method == "stair":
         r = np.zeros(N)
         for i in range(0,N):
@@ -164,14 +170,15 @@ def generate_reference(N,method = "linear",amp = 2):
 
 # The following function reads the output file from a simulator run
 def read_output():
-    output_location = project_root / "meta_arx" / "run_simulation" / "history" / "closed_loop_sim.csv"
+    output_location = project_root / "fusion" / "run_simulation" / "history" / "closed_loop_sim.csv"
     data = pd.read_csv(output_location)
     t = data["t_s"]
-    y = data["y_pred"]
-    u = data["u_cmd"]
-    e = data["error"]
-    r = data["reference"]
-    return t, y, u, e, r
+    y = np.column_stack([data["y1"],data["y2"],data["y3"]])
+    u = np.column_stack([data["u1"],data["u2"],data["u3"]])
+    e = np.column_stack([data["e1"],data["e2"],data["e3"]])
+    r = np.column_stack([data["r1"],data["r2"],data["r3"]])
+    GP_var = np.column_stack([data["gp_var1"],data["gp_var2"],data["gp_var3"]])
+    return t, y, u, e, r, GP_var
 
 #%%
 # -----------------------------
@@ -182,46 +189,73 @@ def read_output():
 theta_PID = np.array(([1]))
 data = pd.DataFrame(theta_PID, columns=["u_constant"])
 save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "open_loop_params.csv"
+save_location_velocity = project_root / "meta_arx" / "run_simulation" / "init_data" / "open_loop_velocity_params.csv"
 data.to_csv(save_location, index=False)
-
+data.to_csv(save_location_velocity, index=False)
 # Generate a white noise referense (continually exciting across all frequencies)
 generate_reference(N,"random",A)
 
 # Run simulation with open-loop controller:
 run_closed_loop_from_config(
     ref_csv="run_simulation/init_data/reference.csv",
-    controller_name="open_loop",
-    controller_config="run_simulation/init_data/open_loop_params.csv",
+    controller_name="open_loop_velocity",
+    controller_config=save_location_velocity,
     out_csv="run_simulation/history/closed_loop_sim.csv",
     dt=1.0,
 )
 
-_, y ,u_pos, _, r = read_output()
+#%% TEMP TEST DELETE CELL WHEN DONE
+# save_locationPID = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv"
+# ttt = pd.read_csv(save_locationPID)
 
-u = np.gradient(u_pos,1)
+# names = list(ttt.columns)
+# arr = ttt.to_numpy()
+# lin1 = arr[0,:]
+# lin2 = arr[1,:]
+# lin3 = arr[2,:]
+# coeffs = block_diag(lin1,lin2,lin3)
+# print(coeffs)
+# print(ttt.columns)
+
+ffh = np.array([1,2,3])
+ffg = ffh*2
+print(ffg)
+
+#%%
+t_data, y ,u_pos, _, r, _ = read_output()
+
+u = np.gradient(u_pos,axis=0)
 
 #%%
 # -----------------------------
 # Construct virtual reference and error
 # -----------------------------
-# r_v = M^-1(z) y
-# First invert M (apply filter defined by denominator/ numerator swapped)
-# That is, r_v = lfilter(M_den, M_num, y)
 
+# Construct the discrete time numerator and denominator of the reference model
 M_num, M_den = M_cont_to_disc(tau,t,q,Ts)
+# Construct the discrete time numerator and denominator of frequency weighting function
+W_num, W_den=W_cont_to_disc(omega,Ts)
+# Fit a model to the spectral power of the inpuits
+Phi1_num, Phi1_den = construct_phi(u[:,0])
+Phi2_num, Phi2_den = construct_phi(u[:,1])
+Phi3_num, Phi3_den = construct_phi(u[:,2])
+# Construct the main VRFT filter
+F1_num, F1_den, aux1_num, aux1_den = GetFilterCoeff(M_num,M_den,W_num,W_den,Phi1_num,Phi1_den)
+F2_num, F2_den, aux2_num, aux2_den = GetFilterCoeff(M_num,M_den,W_num,W_den,Phi2_num,Phi2_den)
+F3_num, F3_den, aux3_num, aux3_den = GetFilterCoeff(M_num,M_den,W_num,W_den,Phi3_num,Phi3_den)
 
-lp_num, lp_den=W_cont_to_disc(omega,Ts)
-
-Phi_inv_num, Phi_inv_den = construct_phi(u)
-
-F_num, F_den, aux_num, aux_den = GetFilterCoeff(M_num,M_den,lp_num,lp_den,Phi_inv_num,Phi_inv_den)
-
-y_v = lfilter(F_num,F_den,y)
-
-# Virtual, filtered error
-e_v = lfilter(aux_num,aux_den,y) - y_v
+# Filter y through the VRFT filter
+y_l1 = lfilter(F1_num,F1_den,y[:,0],axis=0)
+y_l2 = lfilter(F2_num,F2_den,y[:,1],axis=0)
+y_l3 = lfilter(F3_num,F3_den,y[:,2],axis=0)
+# Construct the virtual error
+e_l1 = lfilter(aux1_num,aux1_den,y[:,0],axis=0) - y_l1
+e_l2 = lfilter(aux2_num,aux2_den,y[:,1],axis=0) - y_l2
+e_l3 = lfilter(aux3_num,aux3_den,y[:,2],axis=0) - y_l3
 # Filtered input
-u_l=lfilter(F_num, F_den, u)
+u_l1 = lfilter(F1_num, F1_den, u[:,0])
+u_l2 = lfilter(F2_num, F2_den, u[:,1])
+u_l3 = lfilter(F3_num, F3_den, u[:,2])
 #%%
 # -----------------------------
 # Define controller structure C(z, θ), in this case a PID controller
@@ -230,25 +264,102 @@ u_l=lfilter(F_num, F_den, u)
 # The derivative term is implemented as the backwards difference.
 # The integral terms is implemented as the cumulative sum of all error terms.
 # C(z,θ): u = kp * e[k] + ki * sum(e[k])*Ts - kd * (y[k]-y[k-1])/Ts
-phi_PID=np.column_stack([e_v[1:],np.cumsum(e_v)[1:]*Ts,-(y_v[1:]-y_v[:-1])/Ts])
+phi1 = np.column_stack([e_l1[1:],np.cumsum(e_l1)[1:]*Ts,-(y_l1[1:]-y_l1[:-1])/Ts])
+phi2 = np.column_stack([e_l2[1:],np.cumsum(e_l2)[1:]*Ts,-(y_l2[1:]-y_l2[:-1])/Ts])
+phi3 = np.column_stack([e_l3[1:],np.cumsum(e_l3)[1:]*Ts,-(y_l3[1:]-y_l3[:-1])/Ts])
 #%%
 # -----------------------------
 # Calculate PID params and deploy
 # -----------------------------
 
+
+
 # Solve VRFT optimisation problem with an OLS approach.
-theta_PID, _, _, _ = lstsq(phi_PID, u_l[1:], rcond=None)
+theta_PID, _, _, _ = lstsq(block_diag(phi1,phi2,phi3), np.concatenate([u_l1[:-1],u_l2[:-1],u_l3[:-1]]), rcond=None)
 # Clamp negative values for the integrator term.
-if theta_PID[1]<0:
-    theta_PID[1]=0
+#theta_PID[1],theta_PID[4],theta_PID[7] = 0,0,0
 
 
 print("Tuned controller parameters (θ):", theta_PID)
 
 # Deploy PID params
-data = pd.DataFrame(theta_PID.reshape(1,3), columns=["kp","ki","kd"])
+data = pd.DataFrame(theta_PID.reshape(3,3), columns=["kp","ki","kd"])
 save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv"
 data.to_csv(save_location, index=False)
+
+
+theta_test,_,_,_ = lstsq(phi1,u_l1[:-1],rcond=None)
+print("testparameters: ",theta_test)
+#%% SINDy solution
+
+e_l1 = e_l1.values if hasattr(e_l1, "values") else e_l1
+e_l2 = e_l2.values if hasattr(e_l2, "values") else e_l2
+e_l3 = e_l3.values if hasattr(e_l3, "values") else e_l3
+
+u_l1 = u_l1.values if hasattr(u_l1, "values") else u_l1
+u_l2 = u_l2.values if hasattr(u_l2, "values") else u_l2
+u_l3 = u_l3.values if hasattr(u_l3, "values") else u_l3
+
+t_data = t_data.values if hasattr(t_data, "values") else t_data
+
+
+Libraries = [ps.PolynomialLibrary(),ps.FourierLibrary()]
+
+Lib = ps.GeneralizedLibrary(Libraries)
+Lib = ps.PolynomialLibrary(degree=1)
+opt = ps.STLSQ(threshold=0.0001) # Use sequentially thresholded least squares
+
+e1 = np.column_stack([e_l1[1:],-(y_l1[1:]-y_l1[:-1])/Ts])
+e2 = np.column_stack([e_l2[1:],-(y_l2[1:]-y_l2[:-1])/Ts])
+e3 = np.column_stack([e_l3[1:],-(y_l3[1:]-y_l3[:-1])/Ts])
+
+e_comb = np.column_stack([e_l1[1:],-(y_l1[1:]-y_l1[:-1])/Ts,
+                          e_l2[1:],-(y_l2[1:]-y_l2[:-1])/Ts,
+                          e_l3[1:],-(y_l3[1:]-y_l3[:-1])/Ts])
+
+X = np.column_stack([e1,e2,e3])
+
+X_dot = np.column_stack([u_l1[1:],u_l2[1:],u_l3[1:]])
+
+feature_names = ["e1","y1_d","e2","y2_d","e3","y3_d"]
+
+
+model1 = ps.SINDy(optimizer=opt,feature_library=Lib)
+model1.fit(X, x_dot=u_l1[1:],t=Ts,feature_names=feature_names)   
+model1.print(precision=8)
+
+model2 = ps.SINDy(optimizer=opt,feature_library=Lib)
+model2.fit(X, x_dot=u_l2[1:],t=Ts,feature_names=feature_names)  
+model2.print(precision=8)
+
+model3 = ps.SINDy(optimizer=opt,feature_library=Lib)
+model3.fit(X, x_dot=u_l3[1:],t=Ts,feature_names=feature_names)  
+model3.print(precision=8)
+
+
+
+#model1.score(X,Ts,X_dot)
+model = ps.SINDy(optimizer=opt,feature_library=Lib)
+model.fit(X, x_dot=X_dot,t=Ts,feature_names=feature_names)   
+model.print(precision=8)
+
+xx = model.coefficients()
+#%% Iterative solving for sparsity coefficient
+
+
+
+threshold_scan = np.linspace(0,0.001,25)
+coeffs = []
+
+for i, threshold in enumerate(threshold_scan):
+    opt = ps.STLSQ(threshold=threshold)
+    model = ps.SINDy(optimizer=opt,feature_library=Lib)
+    model.fit(X, x_dot=X_dot,t=Ts,feature_names=feature_names)
+    coeffs.append(model.score(X,Ts,X_dot))
+
+plt.plot(threshold_scan,coeffs)
+plt.show()
+
 
 #%% 
 # -----------------------------
@@ -256,35 +367,58 @@ data.to_csv(save_location, index=False)
 # -----------------------------
 
 if testing == True:
-    generate_reference(200,method="stair")
+    generate_reference(400,method="linear",ss=1.2)
     run_closed_loop_from_config(
         ref_csv="run_simulation/init_data/reference.csv",
-        controller_name="pid",
-        controller_config="run_simulation/init_data/PID_params.csv",
+        controller_name="generalized_controller",
+        controller_config="run_simulation/init_data/generalized_params.csv",
         out_csv="run_simulation/history/closed_loop_sim.csv",
         dt=1.0,
         )
-    num_ic = max(len(M_den),len(M_num))-1
-    init_data = project_root / "meta_arx" / "run_simulation" / "init_data" / "synthetic_plant_ocsillatory_init.csv"
-    ic_data = pd.read_csv(init_data, usecols=["El1_Resistance_mOhm_filt"])
-    ic = ic_data.tail(num_ic)
-    ic = ic.to_numpy()[0,0]
-    zi = np.array([[ic,1,2]])
-    zi = zi.flatten()
- 
-    t_test, y_test ,u_test, _, REF_test = read_output()
-    filter_ref = REF_test.to_numpy()
-    filter_ref[0] = 1.2
-    ref_model_output = lfilter(M_num,M_den,filter_ref,zi=zi)
+    
+    t_test,y_test,u_test,_,r_test,gp_var_test = read_output()
+    plt.figure()
+    plt.subplot(311)
+    plt.plot(t_test,y_test[:,0],label="el1 resistance")
+    plt.plot(t_test,r_test[:,0],"k:",lw=1)
+    plt.legend()
+    plt.tick_params('x', labelbottom=False)
+    
+    plt.subplot(312)
+    plt.plot(t_test,y_test[:,1],"r",label="el2 resistance")
+    plt.plot(t_test,r_test[:,1],"k:",lw=1)
+    plt.legend()
+    plt.tick_params('x', labelbottom=False)
+    
+    plt.subplot(313)
+    plt.plot(t_test,y_test[:,2],"g",label="el3 resistance")
+    plt.plot(t_test,r_test[:,2],"k:",lw=1)
+    plt.legend()
 
-    plt.figure(figsize=(8,5),dpi=600)
-    plt.plot(t_test,y_test,"b",label="El1 Resistance")
-    plt.plot(t_test,REF_test,'k:',label="Reference signal")
-    plt.plot(t_test,u_test,"r-",label="Electrode position")
-    plt.plot(t_test,ref_model_output[0],"g--",label="reference model output")
-    plt.annotate(rf"$M(s) = \frac{{\exp(-{tau}s)}}{{(1 + 0.2 \cdot {t} s)^{q}}}$",xy=(50,-2.25),bbox=dict(boxstyle="square,pad=0.5",
-                          fc="white", ec="black", lw=1))
+    plt.show()
+    
+    plt.figure()
+    plt.subplot(311)
+    plt.plot(t_test,u_test[:,0],label="el1 position")
+    plt.legend()
+    plt.tick_params('x', labelbottom=False)
+    
+    plt.subplot(312)
+    plt.plot(t_test,u_test[:,1],"r",label="el2 position")
+    plt.legend()
+    plt.tick_params('x', labelbottom=False) 
+    
+    plt.subplot(313)
+    plt.plot(t_test,u_test[:,2],"g",label="el3 position")
+    plt.legend()
+    
+    plt.show()
+
+    plt.plot(t_test,gp_var_test[:,0],"b",label = "El1 GP variance")
+    plt.plot(t_test,gp_var_test[:,1],"r",label = "El2 GP variance")   
+    plt.plot(t_test,gp_var_test[:,2],"g",label = "El3 GP variance")
     plt.legend()
     plt.show()
+    
 # Clean up refernce; restores 200 second 1.2 mOhm reference:
 generate_reference(200)
