@@ -12,7 +12,7 @@ import sympy as sm
 import pandas as pd
 import matplotlib.pyplot as plt
 import pysindy as ps
-
+import joblib
 
 import os
 from pathlib import Path 
@@ -204,23 +204,6 @@ run_closed_loop_from_config(
     dt=1.0,
 )
 
-#%% TEMP TEST DELETE CELL WHEN DONE
-# save_locationPID = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv"
-# ttt = pd.read_csv(save_locationPID)
-
-# names = list(ttt.columns)
-# arr = ttt.to_numpy()
-# lin1 = arr[0,:]
-# lin2 = arr[1,:]
-# lin3 = arr[2,:]
-# coeffs = block_diag(lin1,lin2,lin3)
-# print(coeffs)
-# print(ttt.columns)
-
-ffh = np.array([1,2,3])
-ffg = ffh*2
-print(ffg)
-
 #%%
 t_data, y ,u_pos, _, r, _ = read_output()
 
@@ -287,9 +270,6 @@ data = pd.DataFrame(theta_PID.reshape(3,3), columns=["kp","ki","kd"])
 save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv"
 data.to_csv(save_location, index=False)
 
-
-theta_test,_,_,_ = lstsq(phi1,u_l1[:-1],rcond=None)
-print("testparameters: ",theta_test)
 #%% SINDy solution
 
 e_l1 = e_l1.values if hasattr(e_l1, "values") else e_l1
@@ -306,7 +286,7 @@ t_data = t_data.values if hasattr(t_data, "values") else t_data
 Libraries = [ps.PolynomialLibrary(),ps.FourierLibrary()]
 
 Lib = ps.GeneralizedLibrary(Libraries)
-Lib = ps.PolynomialLibrary(degree=1)
+Lib = ps.PolynomialLibrary(degree=3)
 opt = ps.STLSQ(threshold=0.0001) # Use sequentially thresholded least squares
 
 e1 = np.column_stack([e_l1[1:],-(y_l1[1:]-y_l1[:-1])/Ts])
@@ -323,30 +303,19 @@ X_dot = np.column_stack([u_l1[1:],u_l2[1:],u_l3[1:]])
 
 feature_names = ["e1","y1_d","e2","y2_d","e3","y3_d"]
 
-
-model1 = ps.SINDy(optimizer=opt,feature_library=Lib)
-model1.fit(X, x_dot=u_l1[1:],t=Ts,feature_names=feature_names)   
-model1.print(precision=8)
-
-model2 = ps.SINDy(optimizer=opt,feature_library=Lib)
-model2.fit(X, x_dot=u_l2[1:],t=Ts,feature_names=feature_names)  
-model2.print(precision=8)
-
-model3 = ps.SINDy(optimizer=opt,feature_library=Lib)
-model3.fit(X, x_dot=u_l3[1:],t=Ts,feature_names=feature_names)  
-model3.print(precision=8)
-
-
-
 #model1.score(X,Ts,X_dot)
 model = ps.SINDy(optimizer=opt,feature_library=Lib)
 model.fit(X, x_dot=X_dot,t=Ts,feature_names=feature_names)   
 model.print(precision=8)
 
+
+model_save = project_root / "meta_arx" / "run_simulation" / "init_data" / "GC_helper.joblib"
+joblib.dump(model, model_save)
+
+
 xx = model.coefficients()
 #%% Iterative solving for sparsity coefficient
-
-
+"""
 
 threshold_scan = np.linspace(0,0.001,25)
 coeffs = []
@@ -360,7 +329,7 @@ for i, threshold in enumerate(threshold_scan):
 plt.plot(threshold_scan,coeffs)
 plt.show()
 
-
+"""
 #%% 
 # -----------------------------
 # Testing. Commented out by default.
@@ -371,7 +340,7 @@ if testing == True:
     run_closed_loop_from_config(
         ref_csv="run_simulation/init_data/reference.csv",
         controller_name="generalized_controller",
-        controller_config="run_simulation/init_data/generalized_params.csv",
+        controller_config="run_simulation/init_data/GC_helper.joblib",
         out_csv="run_simulation/history/closed_loop_sim.csv",
         dt=1.0,
         )
