@@ -14,10 +14,7 @@ class GeneralizedParams:
     model: ps.SINDy
     
 def load_generalized_params_csv(path: str | Path) -> list[GeneralizedParams]:
-    """ Loads coefficients of the generalised controller. The controller is linearly parametrised,
-        with generally non-linear basis functions. Each control input may have different controller structure,
-
-        
+    """ Loads the identified controller object        
     """
     model = joblib.load(path)
     
@@ -63,8 +60,7 @@ class GeneralizedController:
                            e3,d3_term]])
         
         model = self.params.model
-        u_des = model.predict(states) + u_prev.transpose()
-        #u_des = K@states + u_prev.transpose()
+        u_des = model.predict(states) + np.atleast_2d(u_prev).T
 
         return (u_des[0]).tolist(), e.tolist()
 
