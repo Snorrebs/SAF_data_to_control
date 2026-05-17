@@ -4,14 +4,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-
-
+import numpy.typing as npt
+import numpy as np
 @dataclass(frozen=True)
 class OpenLoopParams:
-    u_constant: float
+    u_constant: npt.array
 
 
-def load_open_loop_params_csv(path: str | Path) -> list[OpenLoopParams]:
+def load_open_loop_params_csv(path: str | Path) -> OpenLoopParams:
     """Load open-loop parameters from CSV.
 
     The CSV must contain column ``u_constant`` and either:
@@ -29,11 +29,12 @@ def load_open_loop_params_csv(path: str | Path) -> list[OpenLoopParams]:
         raise ValueError("Open-loop params CSV is missing required column 'u_constant'")
 
     if len(df) == 1:
-        p = OpenLoopParams(u_constant=float(df["u_constant"].iloc[0]))
-        return [p, p, p]
+        p = float(df["u_constant"].iloc[0])
+        return OpenLoopParams(u_constant = np.array([p,p,p]).transpose())
 
     if len(df) >= 3:
-        return [OpenLoopParams(u_constant=float(df["u_constant"].iloc[i])) for i in range(3)]
+        p = df.to_numpy()
+        return OpenLoopParams(u_constant = p)
 
     raise ValueError("Open-loop params CSV must have either 1 row (broadcast) or at least 3 rows")
 
@@ -51,7 +52,13 @@ class OpenLoopController:
     def reset(self) -> None:
         pass
 
-    def step(self, reference: float, y_pred: float, u_prev: float) -> tuple[float, float]:
-        e = float(reference) - float(y_pred)
-        u_des = self.params.u_constant * float(reference)
-        return u_des, e
+    def step(self, reference: npt.ndarray, y_pred: dict, u_prev: npt.ndarray) -> tuple[list, list]:
+        e1 = float(reference[0]) - float(u_prev[0])
+        e2 = float(reference[1]) - float(u_prev[1])
+        e3 = float(reference[2]) - float(u_prev[2])
+        
+        e = np.array([e1,e2,e3])
+
+        K = self.params.u_constant
+        u_des = np.diag(e) @ K + np.atleast_2d(u_prev).T
+        return u_des.tolist(), e.tolist()
