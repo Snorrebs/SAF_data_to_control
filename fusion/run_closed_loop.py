@@ -256,13 +256,12 @@ def run_closed_loop_from_config(
     sim, gp_bundles = _build_sim_and_gps()
     reference       = _load_reference(ref_csv)          # (n, 3)
     
-# Small change to allow unified controller: MARKUS_TEST_CODE
-    if controller_name != "generalized_controller":
+# MPC controller uses old format still
+    if controller_name != "mpc":
+        controllers.reset()
+    else:
         for c in controllers:
-            c.reset()
-        else:
-            controllers[0].reset()
-# End change
+            c.reset()  
     n           = len(reference)
     y           = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
     gp_var_arr  = np.zeros((n + 1, 3))   # GP predictive variance per electrode
@@ -299,8 +298,8 @@ def run_closed_loop_from_config(
 
         # 2. Each controller computes its desired electrode position
 
-# Test fuunction for unified multielectrode controller. MARKUS_TEST_CODE
-        if controller_name == "generalized_controller":
+        # MPC uses old controller format
+        if controller_name != "mpc":
             # 2.1. Unified controller output
             u_new: dict = {}
 
@@ -312,7 +311,7 @@ def run_closed_loop_from_config(
             #3.1. Clip the position command to actuator limits (speed, range)
 
             for i in (1,2,3):
-                u_ki = apply_actuator_limits(u_des[i-1], u_prev[i - 1])
+                u_ki = apply_actuator_limits(u_des[i - 1], u_prev[i - 1])
                 u_new[i]      = u_ki
                 u[k, i - 1]   = u_ki
             e[k]  = e_k
@@ -329,7 +328,7 @@ def run_closed_loop_from_config(
                 u_new[i]      = u_ki
                 u[k, i - 1]  = u_ki
                 e[k, i - 1]  = e_k
-# End test.
+
         # 4. Advance the simulator to the next time step
         y_arx_vec = {i: sim._predict_r(i) for i in (1, 2, 3)}
         with warnings.catch_warnings():
