@@ -60,7 +60,8 @@ class GeneralizedController:
                            e3,d3_term]])
         
         model = self.params.model
-        u_des = model.predict(states) + np.atleast_2d(u_prev).T
+        model_out = model.predict(states)[0]
+        u_des = np.atleast_2d(model_out).T + np.atleast_2d(u_prev).T
 
-        return (u_des[0]).tolist(), e.tolist()
+        return u_des.tolist(), e.tolist()
 
