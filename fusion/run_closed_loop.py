@@ -67,18 +67,26 @@ from .simulators.saf_simulator import SaFSimulator, build_init_row_from_scalars
 from .training.gp_loader import load_gp_bundle, predict_single
 
 
-# MODEL SELECTION -- change _GP_VARIANT to switch between the two plant models.
-# Each variant bundles a matched ARX + GP pair trained on the same dataset.
+# MODEL SELECTION -- change _GP_VARIANT to switch between plant models.
+# Each variant is a matched ARX + GP pair trained on the same dataset.
 # =============================================================================
-_GP_VARIANT = "txt2026_512"   # "pi_512" | "txt2026_512" | "combined_deep_512"
+_GP_VARIANT = "txt2026_512"
 
 # ARX model paired with each GP variant (do not change unless you retrain):
 _ARX_FOR_VARIANT = {
-    "txt2026_512":      "arx_joint_txt2026.joblib",     # ARX trained on 2026 txt data
-    "pi_512":           "arx_joint_pi_v3.joblib",       # ARX trained on PI data
-    "combined_deep_512":"arx_joint_combined_v3.joblib", # ARX trained on PI + txt combined, deep kernel
-    "combined_512":     "arx_joint_combined_v3.joblib", # ARX trained on PI + txt combined, Matern32 kernel
+    "txt2026_512":       "arx_joint_txt2026.joblib",     # ARX trained on 2026 txt data
+    "pi_512":            "arx_joint_pi_v3.joblib",       # ARX trained on PI data
+    "combined_deep_512": "arx_joint_combined_v3.joblib", # ARX trained on PI + txt combined, deep kernel
+    "combined_512":      "arx_joint_combined_v3.joblib", # ARX trained on PI + txt combined, Matern32 kernel
+    "v6":                "arx_joint_v6.joblib",           # V6 joint ARX, debiased GP
+    "v7":                "arx_joint_v6.joblib",           # V7 two-stage: linear correction + GP
 }
+
+# V7 uses a lightweight linear residual model before the GP.
+# The linear model removes ~97% of the ARX residual variance; the GP then
+# learns only the remaining nonlinear component.
+_HAS_LINEAR_STAGE = {"v7"}
+
 _ARX_MODEL = _ARX_FOR_VARIANT[_GP_VARIANT]
 # =============================================================================
 
@@ -92,6 +100,16 @@ _TYPICAL_REAC   = 0.82
 _TYPICAL_V      = 165.0
 _TYPICAL_POS_BY_EL = {1: 1.04,  2: 1.03,  3: 1.04}
 _TYPICAL_R_BY_EL   = {1: 1.20,  2: 0.77,  3: 1.14}
+
+# V6/V7 were trained on PI furnace data at a different operating point.
+# Using the correct kA and R values prevents the ARX from starting 5+ sigma
+# outside its training distribution and immediately diverging.
+_TYPICAL_KA_FOR    = {"v6": 118.0, "v7": 118.0}
+_TYPICAL_REAC_FOR  = {"v6": 0.88,  "v7": 0.88}
+_TYPICAL_R_BY_EL_FOR = {
+    "v6": {1: 1.08, 2: 1.07, 3: 1.07},
+    "v7": {1: 1.08, 2: 1.07, 3: 1.07},
+}
 
 
 def _load_reference(path: str | Path) -> np.ndarray:
@@ -118,12 +136,16 @@ def _load_reference(path: str | Path) -> np.ndarray:
     return np.column_stack([ref, ref, ref])   # broadcast scalar ref to all 3 electrodes
 
 
-def _build_sim_and_gps() -> tuple[SaFSimulator, dict]:
+def _build_sim_and_gps(
+    gp_variant: str = _GP_VARIANT,
+) -> "tuple[SaFSimulator, dict, dict]":
     """
-    Load the joint ARX model and per-electrode GP bundles.
+    Load the joint ARX model, per-electrode GP bundles, and (for V7) linear
+    residual correction models.
 
-    Returns (sim, gp_bundles) where gp_bundles is a dict {1: bundle, 2:..., 3:...}.
-    Missing GP files are skipped; those electrodes run on ARX only.
+    Returns (sim, gp_bundles, linear_models).
+    gp_bundles    : {1: bundle, 2: bundle, 3: bundle}  -- missing keys -> ARX only
+    linear_models : {1: model, 2: model, 3: model}     -- empty unless variant is V7
     """
     import __main__
     from .training.arx_model import ReducedRankRidge
@@ -137,24 +159,35 @@ def _build_sim_and_gps() -> tuple[SaFSimulator, dict]:
     if not hasattr(__main__, "ReducedRankRidge"):
         __main__.ReducedRankRidge = ReducedRankRidge
 
+    if gp_variant not in _ARX_FOR_VARIANT:
+        raise ValueError(
+            f"Unknown gp_variant {gp_variant!r}. "
+            f"Choose from: {list(_ARX_FOR_VARIANT)}"
+        )
+
     models_dir = _HERE / "models"
-    arx_path   = models_dir / _ARX_MODEL
+    arx_name   = _ARX_FOR_VARIANT[gp_variant]
+    arx_path   = models_dir / arx_name
 
     if not arx_path.exists():
         raise FileNotFoundError(
             f"ARX model not found: {arx_path}\n"
-            f"Expected: fusion/models/{_ARX_MODEL}"
+            f"Expected: fusion/models/{arx_name}"
         )
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         arx = joblib.load(arx_path)
 
+    ka      = _TYPICAL_KA_FOR.get(gp_variant, _TYPICAL_KA)
+    rx      = _TYPICAL_REAC_FOR.get(gp_variant, _TYPICAL_REAC)
+    r_by_el = _TYPICAL_R_BY_EL_FOR.get(gp_variant, _TYPICAL_R_BY_EL)
+
     init_row = build_init_row_from_scalars(
         pos        = _TYPICAL_POS,
-        r          = _TYPICAL_R,
-        ka         = _TYPICAL_KA,
-        rx         = _TYPICAL_REAC,
+        r          = r_by_el[1],
+        ka         = ka,
+        rx         = rx,
         v          = _TYPICAL_V,
         arx_bundle = arx,
     )
@@ -163,14 +196,15 @@ def _build_sim_and_gps() -> tuple[SaFSimulator, dict]:
     # its natural equilibrium rather than an identical symmetric value.
     for _i in (1, 2, 3):
         for _lag in (1, 2, 3):
-            init_row[f"El{_i}_y_filt_lag{_lag}"]  = _TYPICAL_R_BY_EL[_i]
+            init_row[f"El{_i}_y_filt_lag{_lag}"]  = r_by_el[_i]
             init_row[f"El{_i}_pos_m_lag{_lag}"]    = _TYPICAL_POS_BY_EL[_i]
 
     sim = SaFSimulator(arx, init_row, electrode=1)
+    print(f"[fusion] ARX loaded: {arx_name}  (variant={gp_variant})")
 
     gp_bundles: dict = {}
     for i in (1, 2, 3):
-        gp_path = models_dir / f"gp_el{i}_{_GP_VARIANT}.pt"
+        gp_path = models_dir / f"gp_el{i}_{gp_variant}.pt"
         if gp_path.exists():
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -180,17 +214,36 @@ def _build_sim_and_gps() -> tuple[SaFSimulator, dict]:
         else:
             print(f"[fusion] El{i}: GP not found at {gp_path.name}, running ARX only.")
 
-    return sim, gp_bundles
+    linear_models: dict = {}
+    if gp_variant in _HAS_LINEAR_STAGE:
+        for i in (1, 2, 3):
+            lin_path = models_dir / f"linear_residual_el{i}.joblib"
+            if lin_path.exists():
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    linear_models[i] = joblib.load(lin_path)
+                print(f"[fusion] El{i} linear residual loaded: {lin_path.name}")
+            else:
+                print(f"[fusion] El{i}: linear residual not found at {lin_path.name}, skipping.")
+
+    return sim, gp_bundles, linear_models
 
 
 def _gp_corrected_r(
-    sim:         SaFSimulator,
-    gp_bundles:  dict,
-    electrode:   int,
-    plant_cache: dict,
-    step:        int,
-) -> tuple[float, float]:
-    """Return (R_corrected, gp_variance) for one electrode."""
+    sim:           SaFSimulator,
+    gp_bundles:    dict,
+    electrode:     int,
+    plant_cache:   dict,
+    step:          int,
+    linear_models: "dict | None" = None,
+) -> "tuple[float, float]":
+    """
+    Return (R_corrected, gp_variance) for one electrode.
+
+    For V7, a linear residual correction is applied first, then the GP corrects
+    the remaining nonlinear component.  The total correction (linear + GP) is
+    clipped to +/-0.15 mOhm to limit extrapolation damage.
+    """
     sim._electrode = electrode
     y_arx = sim._predict_r(electrode)
     bun   = gp_bundles.get(electrode)
@@ -204,9 +257,16 @@ def _gp_corrected_r(
     feats["y_real_lag1"]    = plant_cache.get(f"r{electrode}",      y_arx)
     feats["y_real_lag2"]    = plant_cache.get(f"r{electrode}_lag2", y_arx)
 
-    x        = np.array([feats.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
-    mu, var  = predict_single(bun, x)
-    mu       = float(np.clip(mu, -0.15, 0.15))
+    x = np.array([feats.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
+
+    lin_delta = 0.0
+    if linear_models and electrode in linear_models:
+        lin = linear_models[electrode]
+        x_norm = (x.astype(np.float64) - lin["x_mean"]) / lin["x_std"]
+        lin_delta = float(np.dot(x_norm, lin["coef"]) + lin["delta_mean"])
+
+    mu, var = predict_single(bun, x)
+    mu      = float(np.clip(lin_delta + mu, -0.15, 0.15))
     return float(y_arx + mu), float(var)
 
 
@@ -230,7 +290,10 @@ def run_closed_loop_from_config(
     controller_config : CSV with controller parameters (kp, ki, kd for PID).
     out_csv           : Where to write the simulation output CSV.
     dt                : Sample time in seconds (default 1.0).
-    **kwargs          : Ignored. Accepted for compatibility with older call sites.
+    gp_variant        : Optional. Override the module-level _GP_VARIANT for this call.
+                        Accepted values: "txt2026_512", "pi_512", "combined_512",
+                        "combined_deep_512", "v6", "v7".
+    **kwargs          : Other keyword arguments are ignored (compatibility).
 
     Returns
     -------
@@ -253,8 +316,9 @@ def run_closed_loop_from_config(
             for _ in (1, 2, 3)
         ]
 
-    sim, gp_bundles = _build_sim_and_gps()
-    reference       = _load_reference(ref_csv)          # (n, 3)
+    gp_variant = kwargs.pop("gp_variant", _GP_VARIANT)
+    sim, gp_bundles, linear_models = _build_sim_and_gps(gp_variant)
+    reference = _load_reference(ref_csv)          # (n, 3)
     
 # Small change to allow unified controller: MARKUS_TEST_CODE
     if controller_name != "generalized_controller":
@@ -278,7 +342,7 @@ def run_closed_loop_from_config(
     state_list.append(dict(sim._row))
     for i in (1, 2, 3):
         y[0, i - 1], gp_var_arr[0, i - 1] = _gp_corrected_r(
-            sim, gp_bundles, i, plant_cache, step=0
+            sim, gp_bundles, i, plant_cache, step=0, linear_models=linear_models
         )
         plant_cache[f"r{i}"]      = y[0, i - 1]
         plant_cache[f"r{i}_lag2"] = y[0, i - 1]
@@ -292,7 +356,7 @@ def run_closed_loop_from_config(
         gp_var_k: dict = {}
         for i in (1, 2, 3):
             y_pred[i], gp_var_k[i] = _gp_corrected_r(
-                sim, gp_bundles, i, plant_cache, step=k
+                sim, gp_bundles, i, plant_cache, step=k, linear_models=linear_models
             )
 
         sim._electrode = 1

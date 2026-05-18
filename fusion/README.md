@@ -3,16 +3,39 @@
 Joint ARX simulator with per-electrode GP correction for all three electrodes.
 Used as the plant model for closed-loop simulation and VRFT controller design.
 
-Two variants are included — each is a matched ARX + GP pair trained on the same dataset:
+Six variants are included. Each is a matched ARX and GP pair trained on the same dataset. V7 is the recommended choice for PI furnace data.
 
-- `txt2026_512` — trained on 2026 txt plant data
-- `pi_512` — trained on PI data, middle 80%
+- `v7` — V6 joint ARX with two-stage correction: linear model first, then GP on the remaining nonlinear residual. Best on PI data.
+- `v6` — V6 joint ARX with a single debiased GP correction. Nearly as good as V7, slightly simpler.
+- `pi_512` — earlier ARX trained on PI data, middle 80 percent
+- `txt2026_512` — ARX trained on 2026 txt plant data
+- `combined_512` — ARX trained on combined PI and txt data, Matern 3/2 kernel
+- `combined_deep_512` — same combined ARX, deep spectral mixture kernel
 
 ---
 
 ## Step 1 — Model files
 
-Eight files are included in `fusion/models/`:
+Place all model files in `fusion/models/`. Each variant needs its ARX plus one GP file per electrode (three electrodes total). V7 also needs the linear residual files.
+
+**Variant `v7` (recommended for PI furnace)**
+```
+arx_joint_v6.joblib
+gp_el1_v7.pt
+gp_el2_v7.pt
+gp_el3_v7.pt
+linear_residual_el1.joblib
+linear_residual_el2.joblib
+linear_residual_el3.joblib
+```
+
+**Variant `v6`**
+```
+arx_joint_v6.joblib
+gp_el1_v6.pt
+gp_el2_v6.pt
+gp_el3_v6.pt
+```
 
 **Variant `txt2026_512`**
 ```
@@ -46,13 +69,15 @@ gp_el2_combined_512.pt
 gp_el3_combined_512.pt
 ```
 
-To switch variants, change `_GP_VARIANT` at the top of `run_closed_loop.py` — the matching ARX is selected automatically:
+To switch variants, either change `_GP_VARIANT` at the top of `run_closed_loop.py`, or pass `gp_variant` directly to `run_closed_loop_from_config`:
 
 ```python
-_GP_VARIANT = "txt2026_512"            # 2026 txt data
-_GP_VARIANT = "pi_512"                 # PI data middle-80%
-_GP_VARIANT = "combined_deep_512"      # ARX trained on PI + txt combined, deep kernel
-_GP_VARIANT = "combined_512"           # ARX trained on PI + txt combined, Matern32 kernel
+# Set the default variant for all calls in this session:
+_GP_VARIANT = "v7"
+
+# Or override per call:
+run_closed_loop_from_config(..., gp_variant="v7")
+run_closed_loop_from_config(..., gp_variant="txt2026_512")
 ```
 
 ---
@@ -127,13 +152,26 @@ Everything else stays the same. The output CSV will now include `gp_var1/2/3` an
 
 ## PID example
 
-`example_pid_simulation.py` runs a 300-step closed-loop step-response for all three electrodes. Run from `SAF_data_to_control/`:
+`example_pid_simulation.py` runs a 300-step closed-loop step-response for all three electrodes using the V7 model. Run from `SAF_data_to_control/`:
 
 ```
 python fusion/example_pid_simulation.py
 ```
 
 Outputs to `fusion/results/example_pid/`: `closed_loop_result.csv`, `resistance.pdf`, `positions.pdf`.
+
+To test a different variant without editing the script, you can also call from Python:
+
+```python
+from fusion.run_closed_loop import run_closed_loop_from_config
+df = run_closed_loop_from_config(
+    ref_csv           = "path/to/reference.csv",
+    controller_name   = "pid",
+    controller_config = "path/to/PID_params.csv",
+    out_csv           = "path/to/output.csv",
+    gp_variant        = "v7",   # or "v6", "pi_512", "txt2026_512", etc.
+)
+```
 
 ---
 
