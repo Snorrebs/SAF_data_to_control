@@ -12,7 +12,8 @@ To run with a specific model variant, pass gp_variant to run_closed_loop_from_co
     df = run_closed_loop_from_config(..., gp_variant="v7")
 
 Available variants: "txt2026_512", "pi_512", "combined_512", "combined_deep_512",
-                    "v6" (joint ARX + debiased GP), "v7" (joint ARX + linear + GP)
+                    "v6" (joint ARX + debiased GP), "v7" (joint ARX + linear + GP),
+                    "v8" (joint ARX + pure GP, full 80% dataset)
 """
 from __future__ import annotations
 
@@ -43,7 +44,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # R0 matches V6's training-data operating point so each electrode starts
 # at near-zero error. A step down occurs at t=500 s.
 N  = 1000
-R0 = [1.08, 1.07, 1.07]   # near V6 training means
+R0 = [1.08, 1.07, 1.07]   # near V8 training means
 R1 = [0.97, 0.97, 0.97]   # step target at t=500
 
 ref_arr = np.array([[R0[i]] * N for i in range(3)], dtype=float).T
@@ -53,23 +54,30 @@ pd.DataFrame({"r1": ref_arr[:, 0], "r2": ref_arr[:, 1], "r3": ref_arr[:, 2]}).to
     OUT_DIR / "reference.csv", index=False
 )
 
-# PI gains tuned for V6 velocity dynamics.
-# V6 dpos training std is ~0.7 mm/s; with kp=0.003 a 0.1 mOhm error
-# commands 0.3 mm/step (< 1 sigma of training dpos), keeping the ARX
-# within its training distribution.
-pd.DataFrame({"kp": [0.003], "ki": [0.0002], "kd": [0.0]}).to_csv(
-    OUT_DIR / "PID_params.csv", index=False
-)
+# Relay controller config matching the real SAF furnace logic.
+# deadband: half-width around setpoint (mOhm).
+# step_size: electrode move per activation (m), typically 1cm.
+# wait_normal: steps between moves in normal mode.
+# wait_escalated: steps between moves after escalation_count consecutive moves.
+# escalation_count: consecutive moves outside deadband before slowing down.
+pd.DataFrame({
+    "deadband":         [0.04],
+    "step_size":        [0.01],
+    "wait_normal":      [4],
+    "wait_escalated":   [20],
+    "escalation_count": [10],
+}).to_csv(OUT_DIR / "relay_params.csv", index=False)
 
 # Run simulation.
-# Change gp_variant to switch models: "v7", "v6", "pi_512", "txt2026_512", etc.
+# Change gp_variant to switch models: "v8", "v7", "v6", "pi_512", "txt2026_512", etc.
+# Change controller_name to "pid" and controller_config to "PID_params.csv" for PID.
 df = run_closed_loop_from_config(
     ref_csv           = OUT_DIR / "reference.csv",
-    controller_name   = "pid",
-    controller_config = OUT_DIR / "PID_params.csv",
+    controller_name   = "relay",
+    controller_config = OUT_DIR / "relay_params.csv",
     out_csv           = OUT_DIR / "closed_loop_result.csv",
     dt                = 1.0,
-    gp_variant        = "v7",
+    gp_variant        = "v8",
 )
 
 COLORS = ["blue", "red", "green"]

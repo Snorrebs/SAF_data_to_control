@@ -18,6 +18,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 
 def load_gp_bundle(path: str | Path) -> dict[str, Any]:
@@ -75,3 +76,95 @@ def predict_single(bundle: dict[str, Any], x_raw: np.ndarray) -> tuple[float, fl
     mu  = mu_s * y_std + y_mean
     var = var_s * (y_std ** 2)
     return mu, var
+
+
+@torch.no_grad()
+def predict_single_certainty(bundle: dict[str, Any], x_raw: np.ndarray) -> tuple[float, float, float, float]:
+    """
+    Single-sample GP prediction with certainty signals.
+
+    Returns
+    -------
+    mu       : predicted residual mean (mOhm)
+    var      : predicted residual variance (mOhm^2)
+    norm_var : epistemic variance / prior outputscale, in [0, 1]
+               0 = confident (in-distribution), 1 = uncertain (OOD)
+    ind_dist : min L2 distance to nearest inducing point (standardised space)
+    """
+    x_mean = bundle["x_mean"]
+    x_std  = bundle["x_std"]
+    y_mean = float(bundle["y_mean"].flatten()[0])
+    y_std  = float(bundle["y_std"].flatten()[0])
+
+    x_s = (x_raw.astype(np.float32) - x_mean) / x_std
+    xt  = torch.tensor(x_s[None, :], dtype=torch.float32)
+
+    model = bundle["model"]
+    lik   = bundle["likelihood"]
+    model.eval()
+    lik.eval()
+
+    f_dist = model(xt)
+    pred   = lik(f_dist)
+
+    mu  = pred.mean.item() * y_std + y_mean
+    var = max(pred.variance.item(), 0.0) * (y_std ** 2)
+
+    k_scale  = model.covar_module.outputscale.item()
+    norm_var = float((f_dist.variance.item() / k_scale).real)
+    norm_var = max(0.0, min(1.0, norm_var))
+
+    Z = model.variational_strategy.inducing_points.detach()
+    x_proj = model.feature_extractor(xt).detach() if hasattr(model, "feature_extractor") else xt
+    ind_dist = float(torch.cdist(x_proj, Z).min().item())
+
+    return mu, var, norm_var, ind_dist
+
+
+@torch.no_grad()
+def predict_svgp_certainty(model, likelihood, X, batch_size=4096):
+    """
+    Batch GP prediction returning mean and two certainty signals.
+
+    Both signals rise when the model is operating outside its training
+    distribution and fall toward zero when it is confident.
+
+    Parameters
+    ----------
+    model      : SVGPModel or DeepKernelSVGPModel (from load_gp_bundle)
+    likelihood : GaussianLikelihood (from load_gp_bundle)
+    X          : (N, D) array or tensor of standardised inputs
+    batch_size : number of rows to process at once
+
+    Returns
+    -------
+    mu       : (N,) predicted mean in standardised output units
+    norm_var : (N,) epistemic variance / prior outputscale, in [0, 1]
+               0 = model is confident (in-distribution)
+               1 = model is uncertain (out-of-distribution)
+    ind_dist : (N,) min L2 distance to the nearest inducing point
+               (standardised input space, or latent space for deep kernel)
+    """
+    model.eval()
+    likelihood.eval()
+
+    device = next(model.parameters()).device
+    X_t = torch.tensor(X, dtype=torch.float32).to(device) if isinstance(X, np.ndarray) else X.to(device)
+
+    Z       = model.variational_strategy.inducing_points.detach().cpu()
+    k_scale = model.covar_module.outputscale.item()
+
+    loader = DataLoader(TensorDataset(X_t), batch_size=batch_size, shuffle=False)
+
+    means, norm_vars, ind_dists = [], [], []
+    for (xb,) in loader:
+        f_dist = model(xb)
+        means.append(likelihood(f_dist).mean.detach().cpu())
+
+        norm_vars.append((f_dist.variance.detach().cpu() / k_scale).clamp(0.0, 1.0))
+
+        # deep kernel models store inducing points in latent space, project first
+        x_proj = model.feature_extractor(xb).detach().cpu() if hasattr(model, "feature_extractor") else xb.detach().cpu()
+        ind_dists.append(torch.cdist(x_proj, Z).min(dim=1).values)
+
+    return torch.cat(means), torch.cat(norm_vars), torch.cat(ind_dists)

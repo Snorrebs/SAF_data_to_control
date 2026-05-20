@@ -30,8 +30,8 @@ Output CSV columns
 
 Reference CSV format
 --------------------
-  Columns r1, r2, r3  -- per-electrode references (preferred)
-  Column  reference   -- single reference broadcast to all three electrodes
+  Columns r1, r2, r3, per-electrode references (preferred)
+  Column  reference, single reference broadcast to all three electrodes
 
 Typical operating point used as initial state
 ---------------------------------------------
@@ -46,6 +46,7 @@ from __future__ import annotations
 import os
 import sys
 import warnings
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -64,13 +65,13 @@ for _p in [str(_PROJECT_ROOT), str(_META_ARX)]:
 import joblib
 
 from .simulators.saf_simulator import SaFSimulator, build_init_row_from_scalars
-from .training.gp_loader import load_gp_bundle, predict_single
+from .training.gp_loader import load_gp_bundle, predict_single, predict_single_certainty
 
 
-# MODEL SELECTION -- change _GP_VARIANT to switch between plant models.
+# MODEL SELECTION, change _GP_VARIANT to switch between plant models.
 # Each variant is a matched ARX + GP pair trained on the same dataset.
 # =============================================================================
-_GP_VARIANT = "txt2026_512"
+_GP_VARIANT = "v8"
 
 # ARX model paired with each GP variant (do not change unless you retrain):
 _ARX_FOR_VARIANT = {
@@ -80,12 +81,18 @@ _ARX_FOR_VARIANT = {
     "combined_512":      "arx_joint_combined_v3.joblib", # ARX trained on PI + txt combined, Matern32 kernel
     "v6":                "arx_joint_v6.joblib",           # V6 joint ARX, debiased GP
     "v7":                "arx_joint_v6.joblib",           # V7 two-stage: linear correction + GP
+    "v8":                "arx_joint_v8.joblib",           # V8 full-dataset retrain (10/80/10 split)
 }
 
 # V7 uses a lightweight linear residual model before the GP.
 # The linear model removes ~97% of the ARX residual variance; the GP then
 # learns only the remaining nonlinear component.
 _HAS_LINEAR_STAGE = {"v7"}
+
+# OOD gate: when the mean norm_var across all electrodes exceeds this threshold,
+# the controller holds the previous position and the integrators are frozen.
+# Set to 1.0 to disable the gate entirely.
+_OOD_GATE_THRESHOLD = 0.5
 
 _ARX_MODEL = _ARX_FOR_VARIANT[_GP_VARIANT]
 # =============================================================================
@@ -104,11 +111,12 @@ _TYPICAL_R_BY_EL   = {1: 1.20,  2: 0.77,  3: 1.14}
 # V6/V7 were trained on PI furnace data at a different operating point.
 # Using the correct kA and R values prevents the ARX from starting 5+ sigma
 # outside its training distribution and immediately diverging.
-_TYPICAL_KA_FOR    = {"v6": 118.0, "v7": 118.0}
-_TYPICAL_REAC_FOR  = {"v6": 0.88,  "v7": 0.88}
+_TYPICAL_KA_FOR    = {"v6": 118.0, "v7": 118.0, "v8": 118.0}
+_TYPICAL_REAC_FOR  = {"v6": 0.88,  "v7": 0.88,  "v8": 0.88}
 _TYPICAL_R_BY_EL_FOR = {
     "v6": {1: 1.08, 2: 1.07, 3: 1.07},
     "v7": {1: 1.08, 2: 1.07, 3: 1.07},
+    "v8": {1: 1.08, 2: 1.07, 3: 1.07},
 }
 
 
@@ -144,8 +152,8 @@ def _build_sim_and_gps(
     residual correction models.
 
     Returns (sim, gp_bundles, linear_models).
-    gp_bundles    : {1: bundle, 2: bundle, 3: bundle}  -- missing keys -> ARX only
-    linear_models : {1: model, 2: model, 3: model}     -- empty unless variant is V7
+    gp_bundles    : {1: bundle, 2: bundle, 3: bundle}, missing keys use ARX only
+    linear_models : {1: model, 2: model, 3: model}, empty unless variant is V7
     """
     import __main__
     from .training.arx_model import ReducedRankRidge
@@ -229,6 +237,52 @@ def _build_sim_and_gps(
     return sim, gp_bundles, linear_models
 
 
+class _RollingFeatures:
+    """
+    Maintains rolling-window statistics that the ARX simulator doesn't track.
+
+    The V6/V7 GP bundles use 30-step rolling std of R and CalcReac per electrode,
+    extra dpos velocity lags (lag4/5 for El1), R imbalance, and TCA_diff.
+    The simulator only keeps lag1-3 for dpos and has no rolling history, so we
+    maintain the buffers here and inject the computed values into sim._row before
+    each GP inference call.
+    """
+
+    _W = 30  # rolling window length in steps
+
+    def __init__(self):
+        self._r    = {i: deque(maxlen=self._W) for i in (1, 2, 3)}
+        self._reac = {i: deque(maxlen=self._W) for i in (1, 2, 3)}
+        self._dpos1 = deque(maxlen=5)   # El1 dpos history for lag4/5
+
+    def update(self, row: dict) -> None:
+        """Record current simulator state into the rolling buffers."""
+        for i in (1, 2, 3):
+            self._r[i].append(row.get(f"El{i}_y_filt_lag1", 0.0))
+            self._reac[i].append(row.get(f"El{i}_CalcReac_filt_lag1", 0.0))
+        self._dpos1.append(row.get("El1_dpos_mps_filt_lag1", 0.0))
+
+    def inject(self, row: dict) -> None:
+        """Write computed rolling features into sim._row before GP inference."""
+        for i in (1, 2, 3):
+            r_arr    = np.array(self._r[i])
+            reac_arr = np.array(self._reac[i])
+            row[f"El{i}_rolling_std_R_30s"]        = float(np.std(r_arr))    if len(r_arr)    > 1 else 0.0
+            row[f"El{i}_rolling_std_CalcReac_30s"] = float(np.std(reac_arr)) if len(reac_arr) > 1 else 0.0
+
+        # R imbalance: El1 deviation from the three-electrode mean
+        r_now = [row.get(f"El{i}_y_filt_lag1", 0.0) for i in (1, 2, 3)]
+        row["El1_R_imbalance"] = float(r_now[0] - np.mean(r_now))
+
+        # No tap changes in simulation, so TCA_diff is always 0
+        row["TCA_diff"] = 0.0
+
+        # El1 dpos lags 4 and 5 (simulator only keeps lag1-3)
+        d = list(self._dpos1)
+        row["El1_dpos_mps_filt_lag4"] = d[-4] if len(d) >= 4 else 0.0
+        row["El1_dpos_mps_filt_lag5"] = d[-5] if len(d) >= 5 else 0.0
+
+
 def _gp_corrected_r(
     sim:           SaFSimulator,
     gp_bundles:    dict,
@@ -236,9 +290,12 @@ def _gp_corrected_r(
     plant_cache:   dict,
     step:          int,
     linear_models: "dict | None" = None,
-) -> "tuple[float, float]":
+) -> "tuple[float, float, float, float]":
     """
-    Return (R_corrected, gp_variance) for one electrode.
+    Return (R_corrected, gp_variance, norm_var, ind_dist) for one electrode.
+
+    norm_var : epistemic variance normalised to [0, 1], 0 = confident, 1 = OOD
+    ind_dist : min L2 distance to nearest inducing point (standardised space)
 
     For V7, a linear residual correction is applied first, then the GP corrects
     the remaining nonlinear component.  The total correction (linear + GP) is
@@ -248,26 +305,54 @@ def _gp_corrected_r(
     y_arx = sim._predict_r(electrode)
     bun   = gp_bundles.get(electrode)
     if bun is None:
-        return y_arx, 0.0
+        return y_arx, 0.0, 0.0, 0.0
 
-    feats = sim.get_gp_features_electrode(electrode)
-    feats["step_in_window"] = float(min(step, 19))
-    feats["y_sim"]          = y_arx
-    feats["y_sim_sq"]       = y_arx * y_arx
-    feats["y_real_lag1"]    = plant_cache.get(f"r{electrode}",      y_arx)
-    feats["y_real_lag2"]    = plant_cache.get(f"r{electrode}_lag2", y_arx)
+    # V6/V7 use velocity-based features (dpos_mps lags) that live directly in
+    # sim._row, the V6 joint ARX tracks them automatically. Older variants
+    # need the legacy feature-builder which adds y_sim, y_real_lag etc.
+    if any("dpos_mps" in f for f in bun["feature_names"]):
+        # inject features that the simulator doesn't track or initialises at the wrong value
+        sim._row["step_in_window"] = float(step)
+        sim._row["y_sim"]          = y_arx
+        sim._row["y_sim_sq"]       = y_arx * y_arx
+        # TCA/TCB/TCC are tap changer positions; the simulator default (4.0) doesn't
+        # match the training distribution so use the training mean from the bundle
+        for _j, _fname in enumerate(bun["feature_names"]):
+            if _fname in ("TCA", "TCB", "TCC"):
+                sim._row[_fname] = float(bun["x_mean"][_j])
 
-    x = np.array([feats.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
+        x = np.array([sim._row.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
+        delta_mean = float(bun.get("metadata", {}).get("delta_mean", 0.0))
 
-    lin_delta = 0.0
-    if linear_models and electrode in linear_models:
-        lin = linear_models[electrode]
-        x_norm = (x.astype(np.float64) - lin["x_mean"]) / lin["x_std"]
-        lin_delta = float(np.dot(x_norm, lin["coef"]) + lin["delta_mean"])
+        lin_delta = 0.0
+        if linear_models and electrode in linear_models:
+            lin = linear_models[electrode]
+            x_norm = (x.astype(np.float64) - lin["x_mean"]) / lin["x_std"]
+            lin_delta = float(np.dot(x_norm, lin["coef"]) + lin["delta_mean"])
 
-    mu, var = predict_single(bun, x)
-    mu      = float(np.clip(lin_delta + mu, -0.15, 0.15))
-    return float(y_arx + mu), float(var)
+        mu, var, norm_var, ind_dist = predict_single_certainty(bun, x)
+        correction = float(np.clip(lin_delta + mu + delta_mean, -0.15, 0.15))
+        return float(y_arx + correction), float(var), float(norm_var), float(ind_dist)
+
+    else:
+        feats = sim.get_gp_features_electrode(electrode)
+        feats["step_in_window"] = float(min(step, 19))
+        feats["y_sim"]          = y_arx
+        feats["y_sim_sq"]       = y_arx * y_arx
+        feats["y_real_lag1"]    = plant_cache.get(f"r{electrode}",      y_arx)
+        feats["y_real_lag2"]    = plant_cache.get(f"r{electrode}_lag2", y_arx)
+
+        x = np.array([feats.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
+
+        lin_delta = 0.0
+        if linear_models and electrode in linear_models:
+            lin = linear_models[electrode]
+            x_norm = (x.astype(np.float64) - lin["x_mean"]) / lin["x_std"]
+            lin_delta = float(np.dot(x_norm, lin["coef"]) + lin["delta_mean"])
+
+        mu, var, norm_var, ind_dist = predict_single_certainty(bun, x)
+        mu = float(np.clip(lin_delta + mu, -0.15, 0.15))
+        return float(y_arx + mu), float(var), float(norm_var), float(ind_dist)
 
 
 def run_closed_loop_from_config(
@@ -302,19 +387,23 @@ def run_closed_loop_from_config(
     """
     from run_simulation.closed_loop.closed_loop_sim import apply_actuator_limits
 
-    # Multi-electrode API (make_controllers) is preferred; fall back to
-    # calling the single-electrode factory three times for older meta_arx versions.
-    try:
-        from run_simulation.closed_loop.controller_registry import make_controllers
-        controllers = make_controllers(
-            name=controller_name, config_path=controller_config, dt=dt
-        )
-    except (ImportError, AttributeError):
-        from run_simulation.closed_loop.controller_registry import make_controller
-        controllers = [
-            make_controller(name=controller_name, config_path=controller_config, dt=dt)
-            for _ in (1, 2, 3)
-        ]
+    if controller_name == "relay":
+        from .controllers.relay import RelayController, load_relay_params
+        controllers = [RelayController(**p) for p in load_relay_params(controller_config)]
+    else:
+        # Multi-electrode API (make_controllers) is preferred; fall back to
+        # calling the single-electrode factory three times for older meta_arx versions.
+        try:
+            from run_simulation.closed_loop.controller_registry import make_controllers
+            controllers = make_controllers(
+                name=controller_name, config_path=controller_config, dt=dt
+            )
+        except (ImportError, AttributeError):
+            from run_simulation.closed_loop.controller_registry import make_controller
+            controllers = [
+                make_controller(name=controller_name, config_path=controller_config, dt=dt)
+                for _ in (1, 2, 3)
+            ]
 
     gp_variant = kwargs.pop("gp_variant", _GP_VARIANT)
     sim, gp_bundles, linear_models = _build_sim_and_gps(gp_variant)
@@ -327,21 +416,28 @@ def run_closed_loop_from_config(
         else:
             controllers[0].reset()
 # End change
-    n           = len(reference)
-    y           = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
-    gp_var_arr  = np.zeros((n + 1, 3))   # GP predictive variance per electrode
-    u           = np.zeros((n,     3))   # position commands (m)
-    e           = np.zeros((n,     3))   # controller errors
-    state_list: list[dict] = []          # sim._row snapshot per timestep
+    n              = len(reference)
+    y              = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
+    gp_var_arr     = np.zeros((n + 1, 3))   # GP predictive variance per electrode
+    norm_var_arr   = np.zeros((n + 1, 3))   # normalised epistemic uncertainty [0, 1]
+    ind_dist_arr   = np.zeros((n + 1, 3))   # min L2 distance to nearest inducing point
+    u              = np.zeros((n,     3))   # position commands (m)
+    e              = np.zeros((n,     3))   # controller errors
+    state_list: list[dict] = []             # sim._row snapshot per timestep
 
     plant_cache: dict = {}
     u_prev = np.array([_TYPICAL_POS_BY_EL[i] for i in (1, 2, 3)])
+
+    # Rolling feature tracker, seeds from initial state and updated each step
+    rolling_feats = _RollingFeatures()
+    rolling_feats.update(sim._row)
+    rolling_feats.inject(sim._row)
 
     # Seed y[0] from current simulator state
     sim._electrode = 1
     state_list.append(dict(sim._row))
     for i in (1, 2, 3):
-        y[0, i - 1], gp_var_arr[0, i - 1] = _gp_corrected_r(
+        y[0, i - 1], gp_var_arr[0, i - 1], norm_var_arr[0, i - 1], ind_dist_arr[0, i - 1] = _gp_corrected_r(
             sim, gp_bundles, i, plant_cache, step=0, linear_models=linear_models
         )
         plant_cache[f"r{i}"]      = y[0, i - 1]
@@ -350,49 +446,64 @@ def run_closed_loop_from_config(
 
     for k in range(n):
         plant_cache["step"] = k
+        rolling_feats.inject(sim._row)
 
         # 1. Predict R one step ahead (ARX + GP) for all three electrodes
-        y_pred:   dict = {}
-        gp_var_k: dict = {}
+        y_pred:     dict = {}
+        gp_var_k:   dict = {}
+        norm_var_k: dict = {}
+        ind_dist_k: dict = {}
         for i in (1, 2, 3):
-            y_pred[i], gp_var_k[i] = _gp_corrected_r(
+            y_pred[i], gp_var_k[i], norm_var_k[i], ind_dist_k[i] = _gp_corrected_r(
                 sim, gp_bundles, i, plant_cache, step=k, linear_models=linear_models
             )
 
         sim._electrode = 1
 
-        # 2. Each controller computes its desired electrode position
+        # 2. OOD gate: hold position and freeze integrators when GP is uncertain
+        mean_nv = float(np.mean([norm_var_k[i] for i in (1, 2, 3)]))
+        ood_hold = mean_nv > _OOD_GATE_THRESHOLD
+
+        # 3. Each controller computes its desired electrode position
 
 # Test fuunction for unified multielectrode controller. MARKUS_TEST_CODE
         if controller_name == "generalized_controller":
-            # 2.1. Unified controller output
             u_new: dict = {}
-
-            u_des, e_k = controllers.step(
-                reference = reference[k],
-                y_pred    = y_pred,
-                u_prev    = u_prev
-            )
-            #3.1. Clip the position command to actuator limits (speed, range)
-
-            for i in (1,2,3):
-                u_ki = apply_actuator_limits(u_des[i-1], u_prev[i - 1])
-                u_new[i]      = u_ki
-                u[k, i - 1]   = u_ki
-            e[k]  = e_k
+            if ood_hold:
+                for i in (1, 2, 3):
+                    u_new[i]    = float(u_prev[i - 1])
+                    u[k, i - 1] = u_new[i]
+                e[k] = np.array([reference[k, i - 1] - y_pred[i + 1] for i in range(3)])
+            else:
+                u_des, e_k = controllers.step(
+                    reference = reference[k],
+                    y_pred    = y_pred,
+                    u_prev    = u_prev
+                )
+                for i in (1, 2, 3):
+                    u_ki = apply_actuator_limits(u_des[i-1], u_prev[i - 1])
+                    u_new[i]      = u_ki
+                    u[k, i - 1]   = u_ki
+                e[k] = e_k
         else:
             u_new: dict = {}
-            for i in (1, 2, 3):
-                u_des, e_k = controllers[i - 1].step(
-                    reference = reference[k, i - 1],
-                    y_pred    = y_pred[i],
-                    u_prev    = u_prev[i - 1],
+            if ood_hold:
+                for i in (1, 2, 3):
+                    u_new[i]     = float(u_prev[i - 1])
+                    u[k, i - 1]  = u_new[i]
+                    e[k, i - 1]  = reference[k, i - 1] - y_pred[i]
+            else:
+                for i in (1, 2, 3):
+                    u_des, e_k = controllers[i - 1].step(
+                        reference = reference[k, i - 1],
+                        y_pred    = y_pred[i],
+                        u_prev    = u_prev[i - 1],
                     )
-                # 3. Clip the position command to actuator limits (speed, range)
-                u_ki          = apply_actuator_limits(u_des, u_prev[i - 1])
-                u_new[i]      = u_ki
-                u[k, i - 1]  = u_ki
-                e[k, i - 1]  = e_k
+                    # Clip to actuator limits (speed, range)
+                    u_ki         = apply_actuator_limits(u_des, u_prev[i - 1])
+                    u_new[i]     = u_ki
+                    u[k, i - 1] = u_ki
+                    e[k, i - 1] = e_k
 # End test.
         # 4. Advance the simulator to the next time step
         y_arx_vec = {i: sim._predict_r(i) for i in (1, 2, 3)}
@@ -400,11 +511,14 @@ def run_closed_loop_from_config(
             warnings.simplefilter("ignore")
             sim.advance_multi(u_new_vec=u_new, y_new_vec=y_arx_vec)
 
+        rolling_feats.update(sim._row)
         state_list.append(dict(sim._row))
 
         for i in (1, 2, 3):
-            y[k + 1, i - 1]           = y_pred[i]
-            gp_var_arr[k + 1, i - 1]  = gp_var_k[i]
+            y[k + 1, i - 1]              = y_pred[i]
+            gp_var_arr[k + 1, i - 1]    = gp_var_k[i]
+            norm_var_arr[k + 1, i - 1]  = norm_var_k[i]
+            ind_dist_arr[k + 1, i - 1]  = ind_dist_k[i]
             plant_cache[f"r{i}_lag2"] = plant_cache.get(f"r{i}", y_arx_vec[i])
             plant_cache[f"r{i}"]      = y_arx_vec[i]
 
@@ -427,9 +541,15 @@ def run_closed_loop_from_config(
         "e2":  np.r_[np.nan, e[:, 1]],
         "e3":  np.r_[np.nan, e[:, 2]],
         "v_transformer": np.full(n + 1, _TYPICAL_V),
-        "gp_var1": gp_var_arr[:, 0],
-        "gp_var2": gp_var_arr[:, 1],
-        "gp_var3": gp_var_arr[:, 2],
+        "gp_var1":   gp_var_arr[:, 0],
+        "gp_var2":   gp_var_arr[:, 1],
+        "gp_var3":   gp_var_arr[:, 2],
+        "norm_var1": norm_var_arr[:, 0],
+        "norm_var2": norm_var_arr[:, 1],
+        "norm_var3": norm_var_arr[:, 2],
+        "ind_dist1": ind_dist_arr[:, 0],
+        "ind_dist2": ind_dist_arr[:, 1],
+        "ind_dist3": ind_dist_arr[:, 2],
     })
     out = pd.concat([out, state_df.reset_index(drop=True)], axis=1)
 
