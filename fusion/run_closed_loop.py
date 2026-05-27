@@ -409,21 +409,18 @@ def run_closed_loop_from_config(
     sim, gp_bundles, linear_models = _build_sim_and_gps(gp_variant)
     reference = _load_reference(ref_csv)          # (n, 3)
     
-# Small change to allow unified controller: MARKUS_TEST_CODE
-    if controller_name != "generalized_controller":
+# MPC controller uses old format still
+    if controller_name != "mpc":
+        controllers.reset()
+    else:
         for c in controllers:
-            c.reset()
-        else:
-            controllers[0].reset()
-# End change
-    n              = len(reference)
-    y              = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
-    gp_var_arr     = np.zeros((n + 1, 3))   # GP predictive variance per electrode
-    norm_var_arr   = np.zeros((n + 1, 3))   # normalised epistemic uncertainty [0, 1]
-    ind_dist_arr   = np.zeros((n + 1, 3))   # min L2 distance to nearest inducing point
-    u              = np.zeros((n,     3))   # position commands (m)
-    e              = np.zeros((n,     3))   # controller errors
-    state_list: list[dict] = []             # sim._row snapshot per timestep
+            c.reset()  
+    n           = len(reference)
+    y           = np.zeros((n + 1, 3))   # predicted R per electrode (mOhm)
+    gp_var_arr  = np.zeros((n + 1, 3))   # GP predictive variance per electrode
+    u           = np.zeros((n,     3))   # position commands (m)
+    e           = np.zeros((n,     3))   # controller errors
+    state_list: list[dict] = []          # sim._row snapshot per timestep
 
     plant_cache: dict = {}
     u_prev = np.array([_TYPICAL_POS_BY_EL[i] for i in (1, 2, 3)])

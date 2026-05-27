@@ -1,6 +1,3 @@
-# Run script to optimise PID parameters. The script deploys kp, ki and kd for each electrode to PID_params.csv, 
-# and generates a 200s 1.2mOhm reference signal.
-# The script also generates an open_loop_params.csv file.
 import numpy as np
 from scipy.signal import lfilter
 from numpy.linalg import lstsq
@@ -12,7 +9,7 @@ import sympy as sm
 import pandas as pd
 import matplotlib.pyplot as plt
 import pysindy as ps
-
+import joblib
 
 import os
 from pathlib import Path 
@@ -22,7 +19,8 @@ import sys
 for m in list(sys.modules):
     if m.startswith("run_simulation"):
         del sys.modules[m]
-
+    if m.startswith("fusion"):
+        del sys.modules[m]
 # Relative path of this script
 VRFTuning = Path(__file__).resolve()
 
@@ -44,6 +42,21 @@ if str(module_path) not in sys.path:
 from fusion.run_closed_loop import run_closed_loop_from_config
 os.chdir(module_path)
 #%%
+""" 
+Define which controller to tune. Any combination is allowed. pid_fullspace is reccomended,
+generalized_controller is unfinished, but works reasonably well.
+
+Testing runs the simulator with the chosen controller active. If testing is not desired, set = None.
+"""
+tune_pid = False
+tune_pid_fullspace = True
+tune_generalized_controller = False
+
+testing = "pid_fullspace" 
+
+data_generation_controller = "open_loop" 
+
+#%%
 # ----------------------------
 # Define hyperparameters
 # -----------------------------
@@ -61,9 +74,6 @@ A = 2     # Amplitude of random data generation. Effectively a hyperparameter.
 # Specify a frequency weighting function on the form:
 # omega/(omega+s)
 omega=0.1 # Cutoff frequency in the frequency weighting function
-
-testing = True # Runs the Simulator at the end of the script with the new controller if True.
-# NOTE: Testing must be set to false if q>3, due to lack of initial conditions.
 
 # No need to interact with anything else in this script for simple tuning. Some functions defined below may be usefull however.
 #%%
@@ -151,6 +161,7 @@ def GetFilterCoeff(num,den,lp_num,lp_den,Phi_inv_num,Phi_inv_den):
 def generate_reference(N,method = "linear",amp = 2,ss = 1.2):
     if method == "linear":
         r=ss*np.ones(N)
+        data = pd.DataFrame(r, columns=["r"])
     if method == "stair":
         r = np.zeros(N)
         for i in range(0,N):
@@ -162,9 +173,19 @@ def generate_reference(N,method = "linear",amp = 2,ss = 1.2):
                 r[i] = 3
             elif i >= (3*N)/(4*Ts):
                 r[i] = 0.5
+        data = pd.DataFrame(r, columns=["r"])
     if method == "random":
-        r = np.random.random(N)*amp
-    data = pd.DataFrame(r, columns=["r"])
+        r1 = np.random.random(N)*amp
+        r2 = np.random.random(N)*amp
+        r3 = np.random.random(N)*amp
+        data = pd.DataFrame(np.array([r1,r2,r3]).reshape(N,3), columns=["r1","r2","r3"])
+    if method == "controlled_random":
+        r1 = [(np.sin(0.01*i - np.pi/3) + 1) for i in range(N)]
+        r2 = [(np.sin(0.02*i) + 1) for i in range(N)]
+        r3 = [(np.sin(0.03*i + np.pi/3) + 1) for i in range(N)]
+        #print(np.array([r1,r2,r3]))
+        data = pd.DataFrame(np.array([r1,r2,r3]).transpose(), columns=["r1","r2","r3"])
+        #print(data)
     save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "reference.csv"
     data.to_csv(save_location, index=False)
 
@@ -180,48 +201,43 @@ def read_output():
     GP_var = np.column_stack([data["gp_var1"],data["gp_var2"],data["gp_var3"]])
     return t, y, u, e, r, GP_var
 
+def controller_lib(name):
+    if name == "pid":
+        config_path = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv" 
+    elif name == "pid_fullspace":
+        config_path = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_fullspace_params.csv"
+    elif name == "open_loop":
+        config_path = project_root / "meta_arx" / "run_simulation" / "init_data" / "open_loop_params.csv"
+    elif name == "generalized_controller":
+        config_path = project_root / "meta_arx" / "run_simulation" / "init_data" / "GC_helper.joblib"
+    else:
+        raise ValueError("Specify valid controller")
+    return config_path
 #%%
 # -----------------------------
 # Data collection is preformed below. The simulator is ran in open-loop with a continually exciting input
 # -----------------------------
 
 # Deploy a dummy parameter for open loop run.
-theta_PID = np.array(([1]))
-data = pd.DataFrame(theta_PID, columns=["u_constant"])
-save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "open_loop_params.csv"
-save_location_velocity = project_root / "meta_arx" / "run_simulation" / "init_data" / "open_loop_velocity_params.csv"
-data.to_csv(save_location, index=False)
-data.to_csv(save_location_velocity, index=False)
+theta_open_loop = np.array([[1],[1],[1]])
+data = pd.DataFrame(theta_open_loop, columns=["u_constant"])
+save_location_open = project_root / "meta_arx" / "run_simulation" / "init_data" / "open_loop_params.csv"
+data.to_csv(save_location_open, index=False)
+
 # Generate a white noise referense (continually exciting across all frequencies)
-generate_reference(N,"random",A)
+generate_reference(2000,"random",A,ss=0.2)
+
+controller_config = controller_lib(data_generation_controller)
 
 # Run simulation with open-loop controller:
 run_closed_loop_from_config(
     ref_csv="run_simulation/init_data/reference.csv",
-    controller_name="open_loop_velocity",
-    controller_config=save_location_velocity,
+    controller_name=data_generation_controller,
+    controller_config=controller_config,
     out_csv="run_simulation/history/closed_loop_sim.csv",
     dt=1.0,
 )
 
-#%% TEMP TEST DELETE CELL WHEN DONE
-# save_locationPID = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv"
-# ttt = pd.read_csv(save_locationPID)
-
-# names = list(ttt.columns)
-# arr = ttt.to_numpy()
-# lin1 = arr[0,:]
-# lin2 = arr[1,:]
-# lin3 = arr[2,:]
-# coeffs = block_diag(lin1,lin2,lin3)
-# print(coeffs)
-# print(ttt.columns)
-
-ffh = np.array([1,2,3])
-ffg = ffh*2
-print(ffg)
-
-#%%
 t_data, y ,u_pos, _, r, _ = read_output()
 
 u = np.gradient(u_pos,axis=0)
@@ -256,122 +272,106 @@ e_l3 = lfilter(aux3_num,aux3_den,y[:,2],axis=0) - y_l3
 u_l1 = lfilter(F1_num, F1_den, u[:,0])
 u_l2 = lfilter(F2_num, F2_den, u[:,1])
 u_l3 = lfilter(F3_num, F3_den, u[:,2])
-#%%
-# -----------------------------
-# Define controller structure C(z, θ), in this case a PID controller
-# -----------------------------
-# Implement a PID controller:
-# The derivative term is implemented as the backwards difference.
-# The integral terms is implemented as the cumulative sum of all error terms.
-# C(z,θ): u = kp * e[k] + ki * sum(e[k])*Ts - kd * (y[k]-y[k-1])/Ts
-phi1 = np.column_stack([e_l1[1:],np.cumsum(e_l1)[1:]*Ts,-(y_l1[1:]-y_l1[:-1])/Ts])
-phi2 = np.column_stack([e_l2[1:],np.cumsum(e_l2)[1:]*Ts,-(y_l2[1:]-y_l2[:-1])/Ts])
-phi3 = np.column_stack([e_l3[1:],np.cumsum(e_l3)[1:]*Ts,-(y_l3[1:]-y_l3[:-1])/Ts])
-#%%
-# -----------------------------
-# Calculate PID params and deploy
-# -----------------------------
 
-
-
-# Solve VRFT optimisation problem with an OLS approach.
-theta_PID, _, _, _ = lstsq(block_diag(phi1,phi2,phi3), np.concatenate([u_l1[:-1],u_l2[:-1],u_l3[:-1]]), rcond=None)
-# Clamp negative values for the integrator term.
-#theta_PID[1],theta_PID[4],theta_PID[7] = 0,0,0
-
-
-print("Tuned controller parameters (θ):", theta_PID)
-
-# Deploy PID params
-data = pd.DataFrame(theta_PID.reshape(3,3), columns=["kp","ki","kd"])
-save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv"
-data.to_csv(save_location, index=False)
-
-
-theta_test,_,_,_ = lstsq(phi1,u_l1[:-1],rcond=None)
-print("testparameters: ",theta_test)
 #%% SINDy solution
+if tune_generalized_controller == True:
+    e_l1 = e_l1.values if hasattr(e_l1, "values") else e_l1
+    e_l2 = e_l2.values if hasattr(e_l2, "values") else e_l2
+    e_l3 = e_l3.values if hasattr(e_l3, "values") else e_l3
 
-e_l1 = e_l1.values if hasattr(e_l1, "values") else e_l1
-e_l2 = e_l2.values if hasattr(e_l2, "values") else e_l2
-e_l3 = e_l3.values if hasattr(e_l3, "values") else e_l3
+    u_l1 = u_l1.values if hasattr(u_l1, "values") else u_l1
+    u_l2 = u_l2.values if hasattr(u_l2, "values") else u_l2
+    u_l3 = u_l3.values if hasattr(u_l3, "values") else u_l3
 
-u_l1 = u_l1.values if hasattr(u_l1, "values") else u_l1
-u_l2 = u_l2.values if hasattr(u_l2, "values") else u_l2
-u_l3 = u_l3.values if hasattr(u_l3, "values") else u_l3
-
-t_data = t_data.values if hasattr(t_data, "values") else t_data
-
-
-Libraries = [ps.PolynomialLibrary(),ps.FourierLibrary()]
-
-Lib = ps.GeneralizedLibrary(Libraries)
-Lib = ps.PolynomialLibrary(degree=1)
-opt = ps.STLSQ(threshold=0.0001) # Use sequentially thresholded least squares
-
-e1 = np.column_stack([e_l1[1:],-(y_l1[1:]-y_l1[:-1])/Ts])
-e2 = np.column_stack([e_l2[1:],-(y_l2[1:]-y_l2[:-1])/Ts])
-e3 = np.column_stack([e_l3[1:],-(y_l3[1:]-y_l3[:-1])/Ts])
-
-e_comb = np.column_stack([e_l1[1:],-(y_l1[1:]-y_l1[:-1])/Ts,
-                          e_l2[1:],-(y_l2[1:]-y_l2[:-1])/Ts,
-                          e_l3[1:],-(y_l3[1:]-y_l3[:-1])/Ts])
-
-X = np.column_stack([e1,e2,e3])
-
-X_dot = np.column_stack([u_l1[1:],u_l2[1:],u_l3[1:]])
-
-feature_names = ["e1","y1_d","e2","y2_d","e3","y3_d"]
+    t_data = t_data.values if hasattr(t_data, "values") else t_data
 
 
-model1 = ps.SINDy(optimizer=opt,feature_library=Lib)
-model1.fit(X, x_dot=u_l1[1:],t=Ts,feature_names=feature_names)   
-model1.print(precision=8)
+    Libraries = [ps.PolynomialLibrary(),ps.FourierLibrary()]
 
-model2 = ps.SINDy(optimizer=opt,feature_library=Lib)
-model2.fit(X, x_dot=u_l2[1:],t=Ts,feature_names=feature_names)  
-model2.print(precision=8)
+    Lib = ps.GeneralizedLibrary(Libraries)
+    Lib = ps.PolynomialLibrary(degree=1)
+    opt = ps.STLSQ(threshold=0.0001) # Use sequentially thresholded least squares
 
-model3 = ps.SINDy(optimizer=opt,feature_library=Lib)
-model3.fit(X, x_dot=u_l3[1:],t=Ts,feature_names=feature_names)  
-model3.print(precision=8)
+    e1 = np.column_stack([e_l1[1:],-(y_l1[1:]-y_l1[:-1])/Ts])
+    e2 = np.column_stack([e_l2[1:],-(y_l2[1:]-y_l2[:-1])/Ts])
+    e3 = np.column_stack([e_l3[1:],-(y_l3[1:]-y_l3[:-1])/Ts])
 
 
+    X = np.column_stack([e1,e2,e3])
 
-#model1.score(X,Ts,X_dot)
-model = ps.SINDy(optimizer=opt,feature_library=Lib)
-model.fit(X, x_dot=X_dot,t=Ts,feature_names=feature_names)   
-model.print(precision=8)
-
-xx = model.coefficients()
-#%% Iterative solving for sparsity coefficient
+    X_dot = np.column_stack([u_l1[1:],u_l2[1:],u_l3[1:]])
 
 
+    feature_names = ["e1","y1_d","e2","y2_d","e3","y3_d"]
 
-threshold_scan = np.linspace(0,0.001,25)
-coeffs = []
-
-for i, threshold in enumerate(threshold_scan):
-    opt = ps.STLSQ(threshold=threshold)
+    #model1.score(X,Ts,X_dot)
     model = ps.SINDy(optimizer=opt,feature_library=Lib)
-    model.fit(X, x_dot=X_dot,t=Ts,feature_names=feature_names)
-    coeffs.append(model.score(X,Ts,X_dot))
-
-plt.plot(threshold_scan,coeffs)
-plt.show()
+    model.fit(X, x_dot=X_dot,t=Ts,feature_names=feature_names)   
+    model.print(precision=8)
 
 
+    model_save = project_root / "meta_arx" / "run_simulation" / "init_data" / "GC_helper.joblib"
+    joblib.dump(model, model_save)
+    
+    xx = model.coefficients()
+    # Iterative solving for sparsity coefficient
+    """
+    # Unfinished linescan for sparsity coefficient
+    threshold_scan = np.linspace(0,0.001,25)
+    coeffs = []
+    
+    for i, threshold in enumerate(threshold_scan):
+        opt = ps.STLSQ(threshold=threshold)
+        model = ps.SINDy(optimizer=opt,feature_library=Lib)
+        model.fit(X, x_dot=X_dot,t=Ts,feature_names=feature_names)
+        coeffs.append(model.score(X,Ts,X_dot))
+    
+    plt.plot(threshold_scan,coeffs)
+    plt.show()
+    
+    """
+# PID solution
+if tune_pid == True:
+    phi1 = np.column_stack([e_l1[1:],np.cumsum(e_l1)[1:]*Ts,-(y_l1[1:]-y_l1[:-1])/Ts])
+    phi2 = np.column_stack([e_l2[1:],np.cumsum(e_l2)[1:]*Ts,-(y_l2[1:]-y_l2[:-1])/Ts])
+    phi3 = np.column_stack([e_l3[1:],np.cumsum(e_l3)[1:]*Ts,-(y_l3[1:]-y_l3[:-1])/Ts])
+
+    theta_PID, _, _, _ = lstsq(block_diag(phi1,phi2,phi3), np.concatenate([u_l1[:-1],u_l2[:-1],u_l3[:-1]]), rcond=None)
+    
+    print("Tuned controller parameters (θ):", theta_PID)
+
+    # Deploy PID params
+    data = pd.DataFrame(theta_PID.reshape(3,3), columns=["kp","ki","kd"])
+    save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_params.csv"
+    data.to_csv(save_location, index=False)
+# PID fullspace solution
+if tune_pid_fullspace == True:
+    phi_fullspace = np.column_stack([e_l1[1:],np.cumsum(e_l1)[1:]*Ts,-(y_l1[1:]-y_l1[:-1])/Ts,
+                                     e_l2[1:],np.cumsum(e_l2)[1:]*Ts,-(y_l2[1:]-y_l2[:-1])/Ts,
+                                     e_l3[1:],np.cumsum(e_l3)[1:]*Ts,-(y_l3[1:]-y_l3[:-1])/Ts])
+    
+    theta_PID_fullspace, _, _, _ = lstsq(block_diag(phi_fullspace,phi_fullspace,phi_fullspace),
+                                         np.concatenate([u_l1[:-1],u_l2[:-1],u_l3[:-1]]), rcond=None)
+    
+    data = pd.DataFrame(theta_PID_fullspace.reshape(3,9), columns=["kp1","ki1","kd1","kp2","ki2","kd2","kp3","ki3","kd3"])
+    save_location = project_root / "meta_arx" / "run_simulation" / "init_data" / "PID_fullspace_params.csv"
+    data.to_csv(save_location, index=False)
+    print("Tuned controller parameters (θ):",theta_PID_fullspace.reshape(3,9))
+
+    
+    
 #%% 
 # -----------------------------
-# Testing. Commented out by default.
+# Testing
 # -----------------------------
 
-if testing == True:
-    generate_reference(400,method="linear",ss=1.2)
+if testing is not None:
+    controller_config = controller_lib(testing)   
+    generate_reference(1000,method="linear",ss=1.2)
     run_closed_loop_from_config(
         ref_csv="run_simulation/init_data/reference.csv",
-        controller_name="generalized_controller",
-        controller_config="run_simulation/init_data/generalized_params.csv",
+        controller_name=str(testing),
+        controller_config=str(controller_config),
         out_csv="run_simulation/history/closed_loop_sim.csv",
         dt=1.0,
         )
