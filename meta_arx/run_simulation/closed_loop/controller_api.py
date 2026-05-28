@@ -6,23 +6,23 @@ from typing import Protocol
 class Controller(Protocol):
     """Single-electrode controller interface.
 
-    Each electrode gets its own Controller instance.  The simulation loop
-    calls ``step`` once per timestep per electrode.
+    Each electrode gets its own Controller instance. The simulation loop calls
+    ``step`` once per timestep per electrode.
     """
 
     def reset(self) -> None:
         ...
 
-    def step(self, reference: float, y_pred: float, u_prev: float) -> tuple[float, float]:
-        """Compute the desired actuator position for one timestep.
+    def step(self, reference: float, y_pred: float, dpos_prev: float,) -> tuple[float, float]:
+        """Compute the desired holder movement for one timestep.
 
         Args:
             reference: setpoint for this timestep
             y_pred:    model-predicted output at this timestep
-            u_prev:    actuator position at the previous timestep
+            u_prev:    previous movement input, if used by the controller
 
         Returns:
-            u_des : desired actuator position (before actuator limits)
-            e     : control error  (reference - y_pred)
+            dpos_des: desired holder movement for this timestep [m/step]
+            e:        control error (reference - y_pred)
         """
         ...

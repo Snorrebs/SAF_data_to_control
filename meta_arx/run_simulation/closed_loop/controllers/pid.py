@@ -103,38 +103,35 @@ class PIDController:
         self._i_term = 0.0
         self._prev_y_pred = None
 
-    def step(self, reference: float, y_pred: float, u_prev: float) -> tuple[float, float]:
-        """Compute desired delta-u for this step.
+    def step(self, reference: float, y_pred: float, dpos_prev: float) -> tuple[float, float]:
+        """Compute desired holder movement for this step.
 
         Args:
             reference: setpoint in R-tilde space [mOhm]
             y_pred:    current predicted output in R-tilde space [mOhm]
-            u_prev:    unused (kept for interface compatibility)
+            dpos_prev: previous holder movement [m/step], unused here
 
         Returns:
-            u_des: desired movement delta-u [m/step]
-            e:     tracking error (reference - y_pred) [mOhm]
+            dpos_des: desired holder movement [m/step]
+            e:        tracking error (reference - y_pred) [mOhm]
         """
         e = float(reference) - float(y_pred)
 
-        # Derivative on output (not error) to avoid derivative kick
         d_term = (
             0.0
             if self._prev_y_pred is None
             else (float(y_pred) - self._prev_y_pred) / self.dt
         )
 
-        # Integrate error before computing output
         self._i_term += e * self.dt
 
         p = self.params
-        u_des = p.kp * e + p.ki * self._i_term - p.kd * d_term
+        dpos_des = p.kp * e + p.ki * self._i_term - p.kd * d_term
 
-        # Clamping anti-windup: undo the integral increment if output saturates
-        u_clipped = float(np.clip(u_des, p.du_min, p.du_max))
-        if u_des != u_clipped and p.ki != 0.0:
+        dpos_clipped = float(np.clip(dpos_des, p.du_min, p.du_max))
+        if dpos_des != dpos_clipped and p.ki != 0.0:
             self._i_term -= e * self.dt
 
         self._prev_y_pred = float(y_pred)
 
-        return u_des, e
+        return dpos_des, e
