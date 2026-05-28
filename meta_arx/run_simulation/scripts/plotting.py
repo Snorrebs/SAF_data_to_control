@@ -47,7 +47,7 @@ def main(path: str | Path) -> None:
     else:
         e = None
 
-    fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
+    fig, axs = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
     fig.suptitle("Closed-loop VARX Simulation — Resistance control", fontsize=14)
 
     # --- Resistance plot ---
@@ -72,16 +72,16 @@ def main(path: str | Path) -> None:
         axs[1].text(0.5, 0.5, "No position columns found", ha="center", va="center")
         axs[1].axis("off")
 
-    # --- Error plot ---
-    if e is not None:
-        for col in e.columns:
-            axs[2].plot(t, e[col], lw=2, label=col)
-        axs[2].set_ylabel("Error [mΩ]")
-        axs[2].legend(ncol=3)
-        axs[2].grid(True, alpha=0.3)
-    else:
-        axs[2].text(0.5, 0.5, "No error columns found", ha="center", va="center")
-        axs[2].axis("off")
+    # # --- Error plot ---
+    # if e is not None:
+    #     for col in e.columns:
+    #         axs[2].plot(t, e[col], lw=2, label=col)
+    #     axs[2].set_ylabel("Error [mΩ]")
+    #     axs[2].legend(ncol=3)
+    #     axs[2].grid(True, alpha=0.3)
+    # else:
+    #     axs[2].text(0.5, 0.5, "No error columns found", ha="center", va="center")
+    #     axs[2].axis("off")
 
     # --- Disturbance plot ---
     # run_mpc.py writes kA1, kA2, kA3; run_closed_loop.py writes v_transformer
@@ -89,22 +89,23 @@ def main(path: str | Path) -> None:
     if ka_cols:
         colors = ["steelblue", "darkorange", "forestgreen"]
         for col, color in zip(ka_cols, colors):
-            axs[3].plot(t, df[col], lw=1.5, color=color, label=col)
-        axs[3].set_ylabel("Current [kA]")
-        axs[3].legend(ncol=3)
-        axs[3].grid(True, alpha=0.3)
+            axs[2].plot(t, df[col], lw=1.5, color=color, label=col)
+        axs[2].set_ylabel("Current [kA]")
+        axs[2].legend(ncol=3)
+        axs[2].grid(True, alpha=0.3)
     elif "v_transformer" in df.columns:
-        axs[3].plot(t, df["v_transformer"], lw=1.5, color="steelblue", label="V transformer")
-        axs[3].set_ylabel("Voltage [V]")
-        axs[3].legend()
-        axs[3].grid(True, alpha=0.3)
+        axs[2].plot(t, df["v_transformer"], lw=1.5, color="steelblue", label="V transformer")
+        axs[2].set_ylabel("Voltage [V]")
+        axs[2].legend()
+        axs[2].grid(True, alpha=0.3)
     else:
-        axs[3].text(0.5, 0.5, "No disturbance column found (expected kA1/kA2/kA3 or v_transformer)",
+        axs[2].text(0.5, 0.5, "No disturbance column found (expected kA1/kA2/kA3 or v_transformer)",
                     ha="center", va="center", fontsize=9)
-        axs[3].axis("off")
+        axs[2].axis("off")
 
-    axs[3].set_xlabel("Time [s]")
+    axs[2].set_xlabel("Time [s]")
     plt.tight_layout()
+    plt.savefig(CSV_PATH.with_suffix(".png"), dpi=300)
     plt.show()
 
 

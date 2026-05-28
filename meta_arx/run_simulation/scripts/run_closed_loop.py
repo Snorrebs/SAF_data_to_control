@@ -11,8 +11,8 @@ from run_simulation.closed_loop.controller_registry import make_controllers
 from run_simulation.closed_loop.reference_converter import ReferenceConverter
 
 
-MODEL_PATH = Path("run_simulation/models/step9_2sls_varx_model.joblib")
-HIST_CSV   = Path("run_simulation/init_data/step9_2sls_varx_init.csv")
+MODEL_PATH = Path("run_simulation/models/step9_n10_2sls_varx_model.joblib")
+HIST_CSV   = Path("run_simulation/init_data/step9_n10_2sls_varx_init.csv")
 
 # Perlin noise parameters for kA disturbance
 # Calibrated to Step 1 data: mean ~126-130 kA, std ~7 kA
@@ -203,7 +203,7 @@ def run_closed_loop_from_config(
 
 if __name__ == "__main__":
     run_closed_loop_from_config(
-        ref_csv           = "run_simulation/init_data/reference_res_2.csv",
+        ref_csv           = "run_simulation/init_data/reference_res_1.csv",
         controller_name   = "pid",
         controller_config = "run_simulation/init_data/PID_params.csv",
         out_csv           = "run_simulation/history/closed_loop_sim_varx.csv",
