@@ -1,4 +1,4 @@
-"""
+﻿"""
 fusion/controllers/relay.py
 
 Step-and-wait relay controller that matches the real SAF electrode logic.
@@ -22,7 +22,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
 
 class RelayController:
 
@@ -77,7 +76,6 @@ class RelayController:
 
         u_des = float(u_prev) + float(np.sign(e)) * self.step_size
         return u_des, e
-
 
 def load_relay_params(path: str | Path) -> list[dict]:
     """

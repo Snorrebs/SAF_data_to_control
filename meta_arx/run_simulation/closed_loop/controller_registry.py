@@ -17,6 +17,8 @@ from run_simulation.closed_loop.controllers.pid_fullspace import (
     PidFullspaceController,
     load_pidfullspace_params_csv,
 )
+
+
 def make_mpc_controller(config_path: str, bundle: dict) -> LinearMPC:
     """Instantiate a LinearMPC from a params CSV and a loaded model bundle."""
     params = load_mpc_params_csv(config_path)
@@ -52,5 +54,5 @@ def make_controllers(name: str, config_path: str, dt: float) -> list:
     if key == "pid_fullspace":
         params_list = load_pidfullspace_params_csv(config_path)
         return PidFullspaceController(params=params_list, dt=dt)
- 
+
     raise ValueError(f"Unknown controller type: '{name}'. Valid options: 'pid', 'open_loop'")

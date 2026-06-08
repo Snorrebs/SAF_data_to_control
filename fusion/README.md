@@ -1,119 +1,129 @@
 # SAF Fusion
 
-Joint ARX simulator with per-electrode GP correction for all three electrodes.
-Used as the plant model for closed-loop simulation and VRFT controller design.
+Joint ARX simulator with per-electrode GP correction for a three-electrode
+submerged arc furnace. Used as the plant model for closed-loop simulation and
+VRFT controller design.
 
-Eight variants are available. Each is a matched ARX and GP pair trained on the same dataset.
-The active variant is set with `_GP_VARIANT` at the top of `run_closed_loop.py`.
-
----
-
-## Model files
-
-All model files live in `fusion/models/`. The currently active default is `v9`.
-
-**Variant v9** (step-episode filtered ARX, recommended)
-```
-arx_joint_v9.joblib
-gp_el1_v9.pt   gp_el2_v9.pt   gp_el3_v9.pt
-```
-
-**Variant v8** (full-dataset retrain, 10/80/10 split)
-```
-arx_joint_v8.joblib
-gp_el1_v8.pt   gp_el2_v8.pt   gp_el3_v8.pt
-```
-
-**Variant v7** (two-stage: linear correction then GP)
-```
-arx_joint_v6.joblib
-gp_el1_v7.pt   gp_el2_v7.pt   gp_el3_v7.pt
-linear_residual_el1.joblib   linear_residual_el2.joblib   linear_residual_el3.joblib
-```
-
-**Variant v6** (joint ARX with debiased GP)
-```
-arx_joint_v6.joblib
-gp_el1_v6.pt   gp_el2_v6.pt   gp_el3_v6.pt
-```
-
-**Variant txt2026_512** (ARX trained on 2026 txt plant data)
-```
-arx_joint_txt2026.joblib
-gp_el1_txt2026_512.pt   gp_el2_txt2026_512.pt   gp_el3_txt2026_512.pt
-```
-
-**Variant pi_512** (ARX trained on PI data, middle 80%)
-```
-arx_joint_pi_v3.joblib
-gp_el1_pi_512.pt   gp_el2_pi_512.pt   gp_el3_pi_512.pt
-```
-
-**Variant combined_512** (ARX trained on PI and txt combined, Matern32 kernel)
-```
-arx_joint_combined_v3.joblib
-gp_el1_combined_512.pt   gp_el2_combined_512.pt   gp_el3_combined_512.pt
-```
-
-**Variant combined_deep_512** (ARX trained on PI and txt combined, deep kernel)
-```
-arx_joint_combined_v3.joblib
-gp_el1_combined_deep_512.pt   gp_el2_combined_deep_512.pt   gp_el3_combined_deep_512.pt
-```
-
-To switch variants, change `_GP_VARIANT` at the top of `run_closed_loop.py`. The matching
-ARX file is picked up automatically:
-
-```python
-_GP_VARIANT = "v9"                 # step-episode filtered, recommended
-_GP_VARIANT = "v8"                 # full-dataset retrain
-_GP_VARIANT = "v7"                 # two-stage linear + GP
-_GP_VARIANT = "v6"                 # joint ARX, debiased GP
-_GP_VARIANT = "txt2026_512"        # 2026 txt data
-_GP_VARIANT = "pi_512"             # PI data middle-80%
-_GP_VARIANT = "combined_512"       # PI + txt combined, Matern32 kernel
-_GP_VARIANT = "combined_deep_512"  # PI + txt combined, deep kernel
-```
+The active model variant is set with `_GP_VARIANT` at the top of
+`run_closed_loop.py`. Each variant is a matched ARX and GP pair.
 
 ---
 
-## Python dependencies
+## Model variants
 
-```
-pip install numpy pandas scikit-learn joblib torch gpytorch matplotlib pysindy
-```
+All model files live in `fusion/models/`.
+
+| Variant | ARX file | Description |
+|---|---|---|
+| `v6` | `arx_joint_v6.joblib` | Joint ARX, debiased GP |
+| `v7` | `arx_joint_v6.joblib` | Two-stage: linear correction then GP |
+| `v8` | `arx_joint_v8.joblib` | Full-dataset retrain (10/80/10 split) |
+| `v9` | `arx_joint_v9.joblib` | Step-episode filtered ARX. Relay baseline |
+| `rollout` | `arx_joint_v9.joblib` | SVGP trained on H=1000 rollout windows |
+| `v11` | `arx_joint_pi_v3.joblib` | One-step training, no step_in_window feature |
+| `v12` | `arx_joint_v12.joblib` | SEM-weighted rollout, retrained ARX |
+| `v13` | `arx_joint_v13.joblib` | V12 without own-R lags |
+| `v14` | `arx_joint_v14.joblib` | Per-electrode Ridge, delta-R target |
+| `v15` | `arx_joint_v15.joblib` | Delta-R, 5 lags. PID baseline |
+
+GP files follow the pattern `gp_el{1,2,3}_{variant}.pt`.
+
+`tap_lookup.json` maps R setpoints to transformer tap positions for
+automatic tap selection at simulation start.
 
 ---
 
-## Drop-in usage
+## Usage
 
-Call `run_closed_loop_from_config` from the fusion package:
+### Standard closed-loop (three independent controllers)
 
 ```python
 from fusion.run_closed_loop import run_closed_loop_from_config
 
 run_closed_loop_from_config(
-    ref_csv="path/to/reference.csv",
-    controller_name="pid",
-    controller_config="path/to/PID_params.csv",
-    out_csv="path/to/output.csv",
-    dt=1.0,
+    ref_csv           = "reference.csv",
+    controller_name   = "pid",
+    controller_config = "PID_params.csv",
+    out_csv           = "result.csv",
+    gp_variant        = "v9",
 )
 ```
 
-You can override the variant for a single call without changing the module default:
+### Locked single-mover (one electrode moves per step)
+
+Only the electrode furthest from its setpoint actuates at each step.
+This prevents cross-electrode coupling instability with PID control.
 
 ```python
-run_closed_loop_from_config(..., gp_variant="v8")
+from fusion.run_locked_closed_loop import run_locked_closed_loop_from_config
+
+run_locked_closed_loop_from_config(
+    ref_csv           = "reference.csv",
+    controller_config = "PID_params.csv",
+    out_csv           = "result.csv",
+    controller_name   = "pid",
+    gp_variant        = "v15",
+    gp_scale          = 0.0,
+    warmup_hold_steps = 150,
+    deadband          = 0.0,
+)
 ```
 
-**Supported controller types:**
+`gp_scale=0.0` disables the GP correction (ARX-only). This gives better
+closed-loop performance for V15 because the GP was trained on relay-controlled
+data and introduces bias under PID regulation.
 
-- `pid` - velocity-form PID with block-diagonal gain matrix (one set of Kp/Ki/Kd per electrode)
-- `relay` - step-and-wait relay matching the real plant controller logic
-- `open_loop` - pre-specified position trajectory
-- `generalized_controller` - custom state-space controller
-- `pid_fullspace` - full-state PID
+**Supported controllers:** `pid`, `relay`, `open_loop`
+
+---
+
+## PID tuning
+
+`tune_pid_v13.py` runs a full PID tuning cycle: open-loop step test,
+gain derivation, locked-PID validation with a reference step for El1,
+and a relay comparison across variants.
+
+```
+python fusion/tune_pid_v13.py
+```
+
+Outputs to `fusion/results/pid_tuning_v15/`.
+
+---
+
+## Model accuracy comparison
+
+`compare_models_openloop.py` runs open-loop rollout evaluation on historical
+relay data to compare prediction accuracy across variants.
+
+```
+python fusion/compare_models_openloop.py
+```
+
+Outputs to `fusion/results/model_comparison/`.
+
+---
+
+## Controller examples
+
+```
+python fusion/example_pid_simulation.py
+python fusion/example_relay_rollout.py
+python fusion/example_rule_controller.py
+```
+
+---
+
+## Retraining
+
+| Script | What it trains |
+|---|---|
+| `train_gp_v15.py` | V15 delta-R ARX + SVGP (rollout dataset) |
+| `train_gp.py` | Legacy GP trainer |
+| `archive/train_gp_v14.py` | V14 per-electrode Ridge delta-R ARX (predecessor to V15) |
+| `archive/train_gp_rollout.py` | Rollout SVGP variant |
+
+Training data path is set at the top of each script.
 
 ---
 
@@ -121,38 +131,19 @@ run_closed_loop_from_config(..., gp_variant="v8")
 
 | Column | Description |
 |---|---|
-| `t_s` | time (s) |
-| `y1`, `y2`, `y3` | predicted arc resistance per electrode (mOhm) |
-| `r1`, `r2`, `r3` | reference per electrode (mOhm) |
-| `u1`, `u2`, `u3` | electrode position commands (m) |
-| `e1`, `e2`, `e3` | controller error, reference minus y_pred |
-| `v_transformer` | transformer RMS voltage (V) |
-| `gp_var1/2/3` | GP predictive variance per electrode (mOhm^2) |
-| `norm_var1/2/3` | normalised epistemic uncertainty, 0 to 1 (see note) |
-| `ind_dist1/2/3` | distance to nearest GP inducing point in standardised space |
-| `El{1,2,3}_y_filt_lag{1,2,3}` | ARX resistance lag registers |
-| `El{1,2,3}_kA_filt_lag{1,2,3}` | ARX current lag registers |
-| `El{1,2,3}_CalcReac_filt_lag{1,2,3}` | ARX reactance lag registers |
-| `El{1,2,3}_pos_m_lag{1,2,3}` | ARX position lag registers |
-| `El{1,2,3}_dpos_mps_filt_lag{1,2,3}` | ARX velocity lag registers |
-| `RMS_V_transformer_filt_lag1` | ARX transformer voltage lag register |
-| `TCA`, `TCB`, `TCC` | tap changer positions |
+| `t_s` | Time (s) |
+| `y1`, `y2`, `y3` | Predicted arc resistance per electrode (mOhm) |
+| `r1`, `r2`, `r3` | Reference per electrode (mOhm) |
+| `u1`, `u2`, `u3` | Electrode position commands (m) |
+| `e1`, `e2`, `e3` | Error: reference minus predicted R |
+| `v_transformer` | Transformer RMS voltage (V) |
 
-**On norm_var:** `norm_var` is the GP epistemic uncertainty normalised by the prior output scale.
-A value near 0 means the model is confident the current operating point is inside the training
-distribution. A value near 1 means the point is outside it (out of distribution). When the mean
-norm_var across all three electrodes exceeds 0.5, the OOD gate activates: the controller holds
-the previous position and integrators are frozen until confidence recovers. The threshold is set
-by `_OOD_GATE_THRESHOLD` in `run_closed_loop.py`.
-
-**Reference CSV format:** use columns `r1`, `r2`, `r3` for per-electrode references,
-or a single `reference` column to broadcast the same value to all three electrodes.
+Reference CSV uses columns `r1, r2, r3` (per-electrode) or a single
+`reference` column broadcast to all three.
 
 ---
 
-## Using from VRFT v5.py
-
-Change one import line in `VRFT v5.py`:
+## Drop-in replacement for VRFT v5.py
 
 ```python
 # Old:
@@ -162,66 +153,42 @@ from run_simulation.scripts.run_closed_loop import run_closed_loop_from_config
 from fusion.run_closed_loop import run_closed_loop_from_config
 ```
 
-Everything else stays the same. The output CSV will include all GP uncertainty columns
-and the full ARX state in addition to the standard columns.
-
----
-
-## PID example
-
-`example_pid_simulation.py` runs a 300-step closed-loop step-response for all three electrodes.
-Run from `SAF_data_to_control/`:
-
-```
-python fusion/example_pid_simulation.py
-```
-
-Outputs to `fusion/results/example_pid/`: `closed_loop_result.csv`, `resistance.pdf`, `positions.pdf`.
-
----
-
-## Other controller examples
-
-`example_rule_controller.py` simulates the real plant deadband step controller for all three electrodes.
-Run from `SAF_data_to_control/`:
-
-```
-python fusion/example_rule_controller.py
-```
-
-Results saved to `fusion/results/rule_controller.csv` and `.pdf`.
-
----
-
-## Retraining models from your own data
-
-1. Put CSV files in `fusion/data/` (see `fusion/data/README.md` for required columns)
-2. Run `fusion/train_arx.py` to retrain the ARX
-3. Run `fusion/train_gp.py` to retrain the GP corrections
-
-If your column names differ from the defaults, edit `COLUMN_MAP` at the top of `train_arx.py`
-and `train_gp.py`.
-
 ---
 
 ## Package structure
 
 ```
 fusion/
-  run_closed_loop.py          3-electrode closed-loop simulation entry point
-  example_pid_simulation.py   PID controller demo
-  example_rule_controller.py  rule-based controller demo
-  train_arx.py                retrain ARX from CSV data
-  train_gp.py                 retrain GP corrections
-  models/                     trained model files (all variants, see above)
+  run_closed_loop.py            closed-loop simulation entry point
+  run_locked_closed_loop.py     single-mover locked PID/relay simulation
+  tune_pid_v13.py               PID tuning and relay comparison for V15
+  compare_models_openloop.py    open-loop model accuracy benchmark
+  example_pid_simulation.py     PID example
+  example_relay_rollout.py      relay example
+  example_rule_controller.py    rule-based controller example
+  train_gp_v15.py               V15 ARX + SVGP training (rollout)
+  models/                       trained model files (see table above)
   controllers/
-    relay.py                  step-and-wait relay controller
+    relay.py                    step-and-wait relay controller
   simulators/
-    saf_simulator.py          3-electrode ARX simulator
-    plant.py                  single-electrode plant with GP correction
+    saf_simulator.py            three-electrode ARX simulator
+    plant.py                    single-electrode plant with GP correction
   training/
-    gp_loader.py              load GP bundles, single-sample prediction, OOD certainty
-    arx_model.py              ReducedRankRidge class
+    delta_arx.py                DeltaARXWrapper for per-electrode Ridge models
+    gp_loader.py                GP bundle loader and OOD certainty
+    tap_lookup.py               R setpoint to transformer tap mapping
+  archive/
+    run_closed_loop_rollout.py  legacy rollout entry point
+    train_gp_v14.py             V14 training (predecessor to V15)
+    train_gp_rollout.py         rollout SVGP training
   data/
-    README.md                 required column format
+    README.md                   required data column format
+```
+
+---
+
+## Dependencies
+
+```
+pip install numpy pandas scikit-learn joblib torch gpytorch matplotlib
 ```

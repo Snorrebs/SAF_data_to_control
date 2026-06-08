@@ -32,3 +32,9 @@ data/interim/
 *.xlsx
 *.log
 *.meta
+
+fusion/results/
+
+!fusion/models/*.joblib
+!fusion/models/*.pt
+!fusion/models/tap_lookup.json

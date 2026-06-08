@@ -1,6 +1,5 @@
-"""
+﻿"""
 saf_simulator.py
-----------------
 Three-electrode ARX simulator for SAF furnace.
 
 The simulator propagates 10 coupled signals at each step
@@ -15,22 +14,20 @@ El1 resistance) is captured because all
 electrode states are included as inputs to the joint model.
 
 The simulator supports both single-electrode and full three-electrode control:
-  - single-electrode: call advance(u_new, y_new) -- This will keep non-primary electrode
+  - single-electrode: call advance(u_new, y_new). This will keep non-primary electrode
     positions constant.
   - three-electrode:  call advance_multi(u_new_vec, y_new_vec).
 
 GP correction is applied externally by the "Plant" wrapper (plant.py).
 The simulator's lag registers store ARX-only predictions so that GP correction
-wont affect step to step change through the ARX.
+does not affect step-to-step state through the ARX.
 
 Public API
-----------
-  SaFSimulator              -- the simulator class
-  build_init_row            -- build starting state from a data segment (From historic data)
-  build_init_row_from_scalars -- build starting state from scalar values (From custom values)
+  SaFSimulator              : the simulator class
+  build_init_row            : build starting state from a data segment (from historic data)
+  build_init_row_from_scalars : build starting state from scalar values (from custom values)
 
 Example (single-electrode)
----------------------------------
     import joblib
     from handoff.simulators.saf_simulator import SaFSimulator, build_init_row_from_scalars
     from handoff.simulators.plant import Plant
@@ -57,17 +54,35 @@ from .simulator_interface import SimulatorInterface
 # Default electrode position when no real measurement is available
 _DEFAULT_POS = 1.04   # (typical SAF operating position)
 
+# Maximum lag depth tracked in sim._row for GP features.
+# The ARX model only uses lags 1-3, but GP models (V12+) use up to this depth.
+# Increasing this value adds columns to sim._row automatically. No other changes needed.
+_MAX_LAG = 10
+
+def _shift_lags(row: "pd.Series", prefix: str, new_val: float) -> None:
+    """Shift lag registers for a given signal prefix in-place.
+
+    Finds all columns of the form ``prefix{k}`` present in row.index,
+    shifts them old-to-new (lagN <- lagN-1 ... lag2 <- lag1 <- new_val),
+    then writes new_val into lag1.  Works for any lag depth. The simulator
+    never needs to know in advance how many lags a GP variant will use.
+    """
+    k = 1
+    while f"{prefix}{k}" in row.index:
+        k += 1
+    # k is now one past the highest lag present; shift from top down
+    for j in range(k - 1, 1, -1):
+        row[f"{prefix}{j}"] = row[f"{prefix}{j-1}"]
+    if f"{prefix}1" in row.index:
+        row[f"{prefix}1"] = new_val
+
 # Maps electrode index to the tap-changer column name used as a GP feature
 _TC_COL = {1: "TCA", 2: "TCB", 3: "TCC"}
 
 # Hard upper limit on predicted reactance (mOhm). 
 _REAC_CLIP_MAX = 3.0
 
-
-
 #                            Internal helper: fake scaler for clip-bound computation
-# ---------------------------------------------------------------------------
-
 class _FakeScaler:
     """
     Minimal scaler stub with mean_ and scale_ arrays.
@@ -80,7 +95,6 @@ class _FakeScaler:
     def __init__(self, mean: float, scale: float) -> None:
         self.mean_  = np.array([mean],  dtype=np.float64)
         self.scale_ = np.array([scale], dtype=np.float64)
-
 
 def _extract_clip_bounds(y_sc, y_index: dict) -> tuple[dict, dict]:
     """
@@ -116,11 +130,7 @@ def _extract_clip_bounds(y_sc, y_index: dict) -> tuple[dict, dict]:
 
     return fake_bundles, fake_reac
 
-
-
                    # SaFSimulator (three-electrode ARX)
-# ---------------------------------------------------------------------------
-
 class SaFSimulator(SimulatorInterface):
     """
     Three-electrode SAF furnace simulator using a joint ARX model.
@@ -135,7 +145,6 @@ class SaFSimulator(SimulatorInterface):
     are shifted to to add new the new values.
 
     Parameters
-    ----------
     arx_bundle : dict
         Loaded joint ARX bundle from arx_joint.joblib. Required keys:
         model, X_scaler, Y_scaler, X_cols, y_index.
@@ -182,12 +191,19 @@ class SaFSimulator(SimulatorInterface):
                 lo = max(lo, lo_floor)
             return (lo, mu + 6.0 * sigma)
 
-        fake_bundles, fake_reac = _extract_clip_bounds(arx_bundle["Y_scaler"],
-                                                        arx_bundle["y_index"])
-        self._r_clip    = {i: _bounds(fake_bundles[i]["r"],  lo_floor=0.0) for i in (1, 2, 3)}
-        self._ka_clip   = {i: _bounds(fake_bundles[i]["ka"], lo_floor=0.0) for i in (1, 2, 3)}
-        self._reac_clip = {i: _bounds(fake_reac[i],          lo_floor=0.0) for i in (1, 2, 3)}
-        self._v_clip    = _bounds(fake_bundles["v"],          lo_floor=0.0)
+        _co = arx_bundle.get("clip_overrides")
+        if _co:
+            self._r_clip    = _co["r_clip"]
+            self._ka_clip   = _co["ka_clip"]
+            self._reac_clip = _co["reac_clip"]
+            self._v_clip    = (0.0, 400.0)
+        else:
+            fake_bundles, fake_reac = _extract_clip_bounds(arx_bundle["Y_scaler"],
+                                                            arx_bundle["y_index"])
+            self._r_clip    = {i: _bounds(fake_bundles[i]["r"],  lo_floor=0.0) for i in (1, 2, 3)}
+            self._ka_clip   = {i: _bounds(fake_bundles[i]["ka"], lo_floor=0.0) for i in (1, 2, 3)}
+            self._reac_clip = {i: _bounds(fake_reac[i],          lo_floor=0.0) for i in (1, 2, 3)}
+            self._v_clip    = _bounds(fake_bundles["v"],          lo_floor=0.0)
 
         # Primary electrode position
         pos_col = f"El{electrode}_pos_m_lag1"
@@ -205,8 +221,6 @@ class SaFSimulator(SimulatorInterface):
 
    
                      # SimulatorInterface identity properties
-    # ------------------------------------------------------------------ #
-
     @property
     def output_col(self) -> str:
         return f"El{self._electrode}_Resistance_mOhm_filt"
@@ -221,8 +235,6 @@ class SaFSimulator(SimulatorInterface):
 
     
     #                             State access
-    # ------------------------------------------------------------------ #
-
     def current_y(self) -> float:
         """Return the most recent stored R value for the primary electrode (mOhm)."""
         col = f"El{self._electrode}_y_filt_lag1"
@@ -234,8 +246,6 @@ class SaFSimulator(SimulatorInterface):
 
     
     #             Joint ARX inference with step-level caching
-    # ------------------------------------------------------------------ #
-
     def _predict_all(self) -> np.ndarray:
         """
         Run one joint ARX forward pass and return all 10 signal predictions.
@@ -285,8 +295,6 @@ class SaFSimulator(SimulatorInterface):
 
    
     #                        Advance (single-electrode)
-    # ------------------------------------------------------------------ #
-
     def advance(self, u_new: float, y_new: float) -> None:
         """
         Advance all electrode lag registers one time step.
@@ -324,59 +332,23 @@ class SaFSimulator(SimulatorInterface):
         # Shift all lag registers for all three electrodes.
         # The pattern is: lag3 <- lag2 <- lag1 <- new_value  (oldest value dropped)
         for i in (1, 2, 3):
-            # dpos = electrode position change in this step (m)
             dpos_k = u_by_el[i] - self._pos[i]
-
-            col3, col2, col1 = (f"El{i}_dpos_mps_filt_lag3",
-                                 f"El{i}_dpos_mps_filt_lag2",
-                                 f"El{i}_dpos_mps_filt_lag1")
-            if col3 in row.index: row[col3] = row.get(col2, dpos_k)
-            if col2 in row.index: row[col2] = row.get(col1, dpos_k)
-            if col1 in row.index: row[col1] = dpos_k
-
-            # Store the old position in lag1, then update _pos to new position
-            colp = f"El{i}_pos_m_lag1"
-            if colp in row.index: row[colp] = self._pos[i]
+            _shift_lags(row, f"El{i}_dpos_mps_filt_lag", dpos_k)
+            _shift_lags(row, f"El{i}_pos_m_lag",         self._pos[i])
             self._pos[i] = u_by_el[i]
+            _shift_lags(row, f"El{i}_y_filt_lag",        new_r[i])
+            _shift_lags(row, f"El{i}_kA_filt_lag",       new_ka[i])
+            _shift_lags(row, f"El{i}_CalcReac_filt_lag",
+                        float(np.clip(new_reac[i], *self._reac_clip[i])))
 
-            # R (arc resistance) lag registers
-            r_val = new_r[i]
-            col_r3, col_r2, col_r1 = (f"El{i}_y_filt_lag3",
-                                       f"El{i}_y_filt_lag2",
-                                       f"El{i}_y_filt_lag1")
-            if col_r3 in row.index: row[col_r3] = row.get(col_r2, row.get(col_r1, r_val))
-            if col_r2 in row.index: row[col_r2] = row.get(col_r1, r_val)
-            if col_r1 in row.index: row[col_r1] = r_val
-
-            # kA (arc current) lag registers
-            ka_val = new_ka[i]
-            col_ka3, col_ka2, col_ka1 = (f"El{i}_kA_filt_lag3",
-                                          f"El{i}_kA_filt_lag2",
-                                          f"El{i}_kA_filt_lag1")
-            if col_ka3 in row.index: row[col_ka3] = row.get(col_ka2, row.get(col_ka1, ka_val))
-            if col_ka2 in row.index: row[col_ka2] = row.get(col_ka1, ka_val)
-            if col_ka1 in row.index: row[col_ka1] = ka_val
-
-            # Arc reactance lag registers
-            rx_val = float(np.clip(new_reac[i], *self._reac_clip[i]))
-            col_rx3, col_rx2, col_rx1 = (f"El{i}_CalcReac_filt_lag3",
-                                          f"El{i}_CalcReac_filt_lag2",
-                                          f"El{i}_CalcReac_filt_lag1")
-            if col_rx3 in row.index: row[col_rx3] = row.get(col_rx2, row.get(col_rx1, rx_val))
-            if col_rx2 in row.index: row[col_rx2] = row.get(col_rx1, rx_val)
-            if col_rx1 in row.index: row[col_rx1] = rx_val
-
-        # Update shared transformer voltage
         if "RMS_V_transformer_filt_lag1" in row.index:
             row["RMS_V_transformer_filt_lag1"] = v_new_v
 
         self._u_pos = u_new
-        self._cached_preds = None   # clear cached predictions; state has changed
+        self._cached_preds = None
 
     
     #                    Advance (three-electrode MIMO)
-    # ------------------------------------------------------------------ #
-
     def advance_multi(
         self,
         u_new_vec: dict[int, float],
@@ -388,8 +360,8 @@ class SaFSimulator(SimulatorInterface):
         Use this when running a three-electrode control loop where all electrode
         positions are commanded simultaneously.
 
-        u_new_vec : {1: pos1, 2: pos2, 3: pos3} -- position commands (m)
-        y_new_vec : {1: r1,   2: r2,   3: r3}   -- ARX R predictions (mOhm).
+        u_new_vec : {1: pos1, 2: pos2, 3: pos3}  (position commands in m)
+        y_new_vec : {1: r1,   2: r2,   3: r3}    (ARX R predictions in mOhm)
                     Electrodes missing from y_new_vec are predicted internally.
         """
         row = self._row
@@ -403,41 +375,13 @@ class SaFSimulator(SimulatorInterface):
         for i in (1, 2, 3):
             u_i    = u_new_vec.get(i, self._pos[i])
             dpos_k = u_i - self._pos[i]
-
-            col3, col2, col1 = (f"El{i}_dpos_mps_filt_lag3",
-                                 f"El{i}_dpos_mps_filt_lag2",
-                                 f"El{i}_dpos_mps_filt_lag1")
-            if col3 in row.index: row[col3] = row.get(col2, dpos_k)
-            if col2 in row.index: row[col2] = row.get(col1, dpos_k)
-            if col1 in row.index: row[col1] = dpos_k
-
-            colp = f"El{i}_pos_m_lag1"
-            if colp in row.index: row[colp] = self._pos[i]
+            _shift_lags(row, f"El{i}_dpos_mps_filt_lag", dpos_k)
+            _shift_lags(row, f"El{i}_pos_m_lag",         self._pos[i])
             self._pos[i] = u_i
-
-            r_val = new_r[i]
-            col_r3, col_r2, col_r1 = (f"El{i}_y_filt_lag3",
-                                       f"El{i}_y_filt_lag2",
-                                       f"El{i}_y_filt_lag1")
-            if col_r3 in row.index: row[col_r3] = row.get(col_r2, row.get(col_r1, r_val))
-            if col_r2 in row.index: row[col_r2] = row.get(col_r1, r_val)
-            if col_r1 in row.index: row[col_r1] = r_val
-
-            ka_val = new_ka[i]
-            col_ka3, col_ka2, col_ka1 = (f"El{i}_kA_filt_lag3",
-                                          f"El{i}_kA_filt_lag2",
-                                          f"El{i}_kA_filt_lag1")
-            if col_ka3 in row.index: row[col_ka3] = row.get(col_ka2, row.get(col_ka1, ka_val))
-            if col_ka2 in row.index: row[col_ka2] = row.get(col_ka1, ka_val)
-            if col_ka1 in row.index: row[col_ka1] = ka_val
-
-            rx_val = float(np.clip(new_reac[i], *self._reac_clip[i]))
-            col_rx3, col_rx2, col_rx1 = (f"El{i}_CalcReac_filt_lag3",
-                                          f"El{i}_CalcReac_filt_lag2",
-                                          f"El{i}_CalcReac_filt_lag1")
-            if col_rx3 in row.index: row[col_rx3] = row.get(col_rx2, row.get(col_rx1, rx_val))
-            if col_rx2 in row.index: row[col_rx2] = row.get(col_rx1, rx_val)
-            if col_rx1 in row.index: row[col_rx1] = rx_val
+            _shift_lags(row, f"El{i}_y_filt_lag",        new_r[i])
+            _shift_lags(row, f"El{i}_kA_filt_lag",       new_ka[i])
+            _shift_lags(row, f"El{i}_CalcReac_filt_lag",
+                        float(np.clip(new_reac[i], *self._reac_clip[i])))
 
         if "RMS_V_transformer_filt_lag1" in row.index:
             row["RMS_V_transformer_filt_lag1"] = v_new_v
@@ -447,8 +391,6 @@ class SaFSimulator(SimulatorInterface):
 
     
     #                          GP feature extraction
-    # ------------------------------------------------------------------ #
-
     def get_gp_features(self) -> dict[str, float]:
         """Return the GP feature dict for the primary electrode."""
         return self.get_gp_features_electrode(self._electrode)
@@ -505,7 +447,6 @@ class SaFSimulator(SimulatorInterface):
         one-step-ahead estimates for the next time step.
 
         Keys
-        ----
         R{i}       : arc resistance lag1 for electrode i (mOhm)
         kA{i}      : arc current lag1 for electrode i (kA)
         X{i}       : arc reactance lag1 for electrode i (mOhm)
@@ -539,11 +480,7 @@ class SaFSimulator(SimulatorInterface):
         """Overwrite a column in the state row (for injecting real measurements)."""
         self._row[col] = val
 
-
-
 #                 Helper: build init row from a data segment
-# ---------------------------------------------------------------------------
-
 def build_init_row(
     seg:        pd.DataFrame,
     t:          int,
@@ -557,17 +494,16 @@ def build_init_row(
     have a history segment to replay, or you want to start from a specific point in history.
 
     The segment must contain these columns (one set per electrode i in 1, 2, 3):
-        El{i}_dpos_f   -- filtered electrode velocity (m/s)
-        El{i}_pos_m    -- electrode position (m)
-        El{i}_y_filt   -- filtered arc resistance (mOhm)
-        El{i}_kA_f     -- filtered arc current (kA)
-        El{i}_reac_f   -- filtered arc reactance (mOhm)
+        El{i}_dpos_f   : filtered electrode velocity (m/s)
+        El{i}_pos_m    : electrode position (m)
+        El{i}_y_filt   : filtered arc resistance (mOhm)
+        El{i}_kA_f     : filtered arc current (kA)
+        El{i}_reac_f   : filtered arc reactance (mOhm)
     And shared columns:
-        rms_v_f        -- filtered transformer RMS voltage
-        tca, tcb, tcc  -- tap-changer positions
+        rms_v_f        : filtered transformer RMS voltage
+        tca, tcb, tcc  : tap-changer positions
 
     Parameters
-    ----------
     seg        : pd.DataFrame with at least t+1 rows
     t          : row index to treat as the current time step
     arx_bundle : joint ARX bundle (only X_cols is used here)
@@ -612,11 +548,7 @@ def build_init_row(
     all_cols = sorted(set(arx_bundle["X_cols"]) | set(lookup.keys()))
     return pd.Series({c: lookup.get(c, 0.0) for c in all_cols})
 
-
-
 #           Helper: build init row from scalar operating point values
-# ---------------------------------------------------------------------------
-
 def build_init_row_from_scalars(
     pos:        float,
     r:          float,
@@ -638,7 +570,6 @@ def build_init_row_from_scalars(
     recorded data segment.
 
     Parameters
-    ----------
     pos  : electrode position (m), applied to the primary electrode.
            Other electrodes are also initialised to this position.
     r    : arc resistance (mOhm)
@@ -654,7 +585,7 @@ def build_init_row_from_scalars(
         "TCA": tca, "TCB": tcb, "TCC": tcc,
     }
     for i in (1, 2, 3):
-        for lag in (1, 2, 3):
+        for lag in range(1, _MAX_LAG + 1):
             lookup[f"El{i}_dpos_mps_filt_lag{lag}"] = 0.0    # no movement at init
             lookup[f"El{i}_pos_m_lag{lag}"]          = pos
             lookup[f"El{i}_y_filt_lag{lag}"]         = r

@@ -1,6 +1,5 @@
-"""
+﻿"""
 run_closed_loop.py
-------------------
 Drop-in replacement for meta_arx/run_simulation/scripts/run_closed_loop.py.
 
 Uses the joint ARX simulator and per-electrode GP correction instead of
@@ -8,7 +7,6 @@ the original single-electrode ARX model. Everything else is identical, same
 function signature, same CSV output format, same controller types.
 
 HOW TO USE
-----------
 In VRFT v5.py change one import line:
 
     # Old:
@@ -20,7 +18,6 @@ In VRFT v5.py change one import line:
 Everything else in VRFT v5.py stays exactly the same.
 
 Output CSV columns
-------------------
   t_s           : time in seconds
   y1, y2, y3   : predicted arc resistance per electrode (mOhm)
   r1, r2, r3   : reference signal per electrode (mOhm)
@@ -29,12 +26,10 @@ Output CSV columns
   v_transformer : transformer RMS voltage (V)
 
 Reference CSV format
---------------------
-  Columns r1, r2, r3  -- per-electrode references (preferred)
-  Column  reference   -- single reference broadcast to all three electrodes
+  Columns r1, r2, r3  (per-electrode references, preferred)
+  Column  reference   (single reference broadcast to all three electrodes)
 
 Typical operating point used as initial state
----------------------------------------------
   position   : 1.04 m
   resistance : 1.006 mOhm
   current    : 65 kA
@@ -63,14 +58,13 @@ for _p in [str(_PROJECT_ROOT), str(_META_ARX)]:
         sys.path.insert(0, _p)
 
 import joblib
+from .training.delta_arx import DeltaARXWrapper  # noqa: F401  needed for joblib unpickling of v14/v15
 
 from .simulators.saf_simulator import SaFSimulator, build_init_row_from_scalars
 from .training.gp_loader import load_gp_bundle, predict_single, predict_single_certainty
 
-
-# MODEL SELECTION -- change _GP_VARIANT to switch between plant models.
+# MODEL SELECTION: change _GP_VARIANT to switch between plant models.
 # Each variant is a matched ARX + GP pair trained on the same dataset.
-# =============================================================================
 _GP_VARIANT = "v9"
 
 # ARX model paired with each GP variant (do not change unless you retrain):
@@ -83,6 +77,13 @@ _ARX_FOR_VARIANT = {
     "v7":                "arx_joint_v6.joblib",           # V7 two-stage: linear correction + GP
     "v8":                "arx_joint_v8.joblib",           # V8 full-dataset retrain (10/80/10 split)
     "v9":                "arx_joint_v9.joblib",           # V9 step-episode filtered ARX + GP
+    "rollout":           "arx_joint_v9.joblib",           # SVGP trained on H=1000 rollout windows (PI data)
+    "v11":               "arx_joint_pi_v3.joblib",        # V11 one-step, no step_in_window (MPC-focused)
+    "v12":               "arx_joint_v12.joblib",          # V12 SEM rollout, retrained ARX + GP
+    "v13":               "arx_joint_v13.joblib",          # V13 = V12 without own-R lags (fixes drift)
+    "v14":               "arx_joint_v14.joblib",          # V14 per-electrode Ridge, delta-R target
+    "v15":               "arx_joint_v15.joblib",          # V15 delta-R, 5 lags, all infra fixes
+    "v15b":              "arx_joint_v15.joblib",          # V15b = V15 ARX + one-step-anchored GP
 }
 
 # V7 uses a lightweight linear residual model before the GP.
@@ -96,10 +97,8 @@ _HAS_LINEAR_STAGE = {"v7"}
 _OOD_GATE_THRESHOLD = 0.5
 
 _ARX_MODEL = _ARX_FOR_VARIANT[_GP_VARIANT]
-# =============================================================================
-
 # Typical SAF operating point used to seed the initial simulator state.
-# Per-electrode R values come from a stable rule-controller run -- the three
+# Per-electrode R values come from a stable rule-controller run. The three
 # electrodes sit at different resistances in steady state.
 _TYPICAL_POS    = 1.04
 _TYPICAL_R      = 1.006   # fallback scalar (not used for multi-electrode init)
@@ -112,15 +111,34 @@ _TYPICAL_R_BY_EL   = {1: 1.20,  2: 0.77,  3: 1.14}
 # V6 and later were trained on PI furnace data at a different operating point.
 # Using the correct kA and R values prevents the ARX from starting far outside
 # its training distribution and immediately diverging.
-_TYPICAL_KA_FOR    = {"v6": 118.0, "v7": 118.0, "v8": 118.0, "v9": 118.0}
-_TYPICAL_REAC_FOR  = {"v6": 0.88,  "v7": 0.88,  "v8": 0.88,  "v9": 0.88}
+_TYPICAL_KA_FOR    = {"v6": 118.0, "v7": 118.0, "v8": 118.0, "v9": 118.0,
+                      "rollout": 118.0, "v11": 118.0, "v12": 118.0, "v13": 118.0,
+                      "v14": 118.0, "v15": 118.0, "v15b": 118.0}
+_TYPICAL_REAC_FOR  = {"v6": 0.88,  "v7": 0.88,  "v8": 0.88,  "v9": 0.88,
+                      "rollout": 0.88, "v11": 0.88, "v12": 0.88, "v13": 0.88,
+                      "v14": 0.88, "v15": 0.88, "v15b": 0.88}
 _TYPICAL_R_BY_EL_FOR = {
-    "v6": {1: 1.08, 2: 1.07, 3: 1.07},
-    "v7": {1: 1.08, 2: 1.07, 3: 1.07},
-    "v8": {1: 1.08, 2: 1.07, 3: 1.07},
-    "v9": {1: 1.08, 2: 1.07, 3: 1.07},
+    "v6":      {1: 1.08, 2: 1.07, 3: 1.07},
+    "v7":      {1: 1.08, 2: 1.07, 3: 1.07},
+    "v8":      {1: 1.08, 2: 1.07, 3: 1.07},
+    "v9":      {1: 1.08, 2: 1.07, 3: 1.07},
+    "rollout": {1: 1.08, 2: 1.07, 3: 1.07},
+    "v11":     {1: 1.08, 2: 1.07, 3: 1.07},
+    "v12":     {1: 1.08, 2: 1.07, 3: 1.07},
+    "v13":     {1: 1.08, 2: 1.07, 3: 1.07},
+    "v14":     {1: 1.08, 2: 1.07, 3: 1.07},
+    "v15":     {1: 1.08, 2: 1.07, 3: 1.07},
 }
 
+# The "rollout" SVGP was trained in R_tilde space (R - initial_R).
+# At inference, the initial R from the simulator is used as the mean so that
+# R_tilde_approx = R_abs - R_initial ≈ 0 at the operating point.
+_NEEDS_RTILDE_APPROX = {"rollout"}
+
+# Variants where cross-electrode R lags are frozen at training-set means before
+# each ARX forward pass. This breaks the coupling cascade that makes PID unstable.
+# The means are stored in the ARX bundle under "r_cross_mean".
+_DECOUPLED_R_VARIANTS = {"v13"}
 
 def _load_reference(path: str | Path) -> np.ndarray:
     """
@@ -144,7 +162,6 @@ def _load_reference(path: str | Path) -> np.ndarray:
         ref = df[num_cols[0]].to_numpy(dtype=float)
 
     return np.column_stack([ref, ref, ref])   # broadcast scalar ref to all 3 electrodes
-
 
 def _build_sim_and_gps(
     gp_variant: str = _GP_VARIANT,
@@ -238,7 +255,6 @@ def _build_sim_and_gps(
 
     return sim, gp_bundles, linear_models
 
-
 class _RollingFeatures:
     """
     Maintains rolling-window statistics that the ARX simulator does not track.
@@ -279,12 +295,14 @@ class _RollingFeatures:
             row[f"El{i}_rolling_std_R_30s"]        = float(np.std(r_arr))    if len(r_arr)    > 1 else 0.0
             row[f"El{i}_rolling_std_CalcReac_30s"] = float(np.std(reac_arr)) if len(reac_arr) > 1 else 0.0
 
-        # R imbalance: El1 deviation from the three-electrode mean.
-        # Read the most recent value from the rolling buffer so this stays
-        # correct when y-lags are frozen and the buffer tracks y_pred instead.
+        # R imbalance per electrode: deviation from the three-electrode mean.
+        # Computed for all three so V11/V12 GP models (which use El{i}_R_imbalance
+        # for i=1,2,3) see the correct value rather than defaulting to 0.0.
         r_now = [float(self._r[i][-1]) if self._r[i] else row.get(f"El{i}_y_filt_lag1", 0.0)
                  for i in (1, 2, 3)]
-        row["El1_R_imbalance"] = float(r_now[0] - np.mean(r_now))
+        r_mean_now = np.mean(r_now)
+        for _i_el, _r_val in enumerate(r_now, start=1):
+            row[f"El{_i_el}_R_imbalance"] = float(_r_val - r_mean_now)
 
         # No tap changes in simulation, so TCA_diff is always 0
         row["TCA_diff"] = 0.0
@@ -294,14 +312,18 @@ class _RollingFeatures:
         row["El1_dpos_mps_filt_lag4"] = d[-4] if len(d) >= 4 else 0.0
         row["El1_dpos_mps_filt_lag5"] = d[-5] if len(d) >= 5 else 0.0
 
-
 def _gp_corrected_r(
-    sim:           SaFSimulator,
-    gp_bundles:    dict,
-    electrode:     int,
-    plant_cache:   dict,
-    step:          int,
-    linear_models: "dict | None" = None,
+    sim:             SaFSimulator,
+    gp_bundles:      dict,
+    electrode:       int,
+    plant_cache:     dict,
+    step:            int,
+    linear_models:   "dict | None" = None,
+    gp_variant:      str = "",
+    r_initial:       "dict | None" = None,
+    gp_ramp_offset:  int = 0,
+    gp_scale:        float = 1.0,
+    gp_bias:         float = 0.0,
 ) -> "tuple[float, float, float, float]":
     """
     Return (R_corrected, gp_variance, norm_var, ind_dist) for one electrode.
@@ -323,16 +345,37 @@ def _gp_corrected_r(
     # sim._row; the V6 joint ARX tracks them automatically. Older variants
     # need the legacy feature-builder which adds y_sim, y_real_lag etc.
     if any("dpos_mps" in f for f in bun["feature_names"]):
-        sim._row["step_in_window"] = float(step)
+        # Clamp step_in_window to the GP's training range so steps beyond
+        # ROLLOUT_H see the learned steady-state correction, not OOD extrapolation.
+        _siw_max = float(bun.get("metadata", {}).get("rollout_H", 19))
+        sim._row["step_in_window"] = float(min(step, _siw_max - 1))
         sim._row["y_sim"]          = y_arx
         sim._row["y_sim_sq"]       = y_arx * y_arx
-        # TCA/TCB/TCC are tap changer positions; the simulator default (4.0) does not
-        # match the training distribution so use the training mean from the bundle
-        for _j, _fname in enumerate(bun["feature_names"]):
-            if _fname in ("TCA", "TCB", "TCC"):
-                sim._row[_fname] = float(bun["x_mean"][_j])
+        # TCA/TCB/TCC: use the value already in sim._row (set by tap auto-correction).
+        # The previous override to training mean prevented tap changes from taking
+        # effect during simulation.  The tap lookup now seeds the correct value
+        # at initialisation and updates it each step in run_locked_closed_loop,
+        # so sim._row already holds the right tap setting.
+        # Only fall back to training mean if the tap lookup is not present
+        # (i.e. the tap has not been set from outside).
+        _tap_lookup_present = (_HERE / "models" / "tap_lookup.json").exists()
+        if not _tap_lookup_present:
+            for _j, _fname in enumerate(bun["feature_names"]):
+                if _fname in ("TCA", "TCB", "TCC"):
+                    sim._row[_fname] = float(bun["x_mean"][_j])
 
-        x = np.array([sim._row.get(f, 0.0) for f in bun["feature_names"]], dtype=np.float32)
+        # Apply per-electrode R-lag demeaning if the bundle was trained with it
+        _r_op = bun.get("r_op_offset", {})
+        raw_x = []
+        for f in bun["feature_names"]:
+            val = float(sim._row.get(f, 0.0))
+            if _r_op:
+                for _i in (1, 2, 3):
+                    if f.startswith(f"El{_i}_y_filt_lag"):
+                        val -= _r_op.get(_i, 0.0)
+                        break
+            raw_x.append(val)
+        x = np.array(raw_x, dtype=np.float32)
         delta_mean = float(bun.get("metadata", {}).get("delta_mean", 0.0))
 
         lin_delta = 0.0
@@ -343,6 +386,17 @@ def _gp_corrected_r(
 
         mu, var, norm_var, ind_dist = predict_single_certainty(bun, x)
         correction = float(np.clip(lin_delta + mu + delta_mean, -0.15, 0.15))
+        # Subtract operating-point bias; scale by gp_scale (0 = ARX-only).
+        correction = (correction - gp_bias) * gp_scale
+
+        # Ramp GP correction in over the first _RAMP steps after the hold
+        # phase ends. The zero-dpos cold start is slightly out of distribution
+        # for rollout-trained GPs; ramping avoids a large initial transient.
+        _RAMP      = 30
+        _ramp_step = step - gp_ramp_offset
+        if gp_variant in ("v14", "v15", "v15b") and _ramp_step < _RAMP:
+            correction *= max(0.0, float(_ramp_step)) / _RAMP
+
         return float(y_arx + correction), float(var), float(norm_var), float(ind_dist)
 
     else:
@@ -365,6 +419,55 @@ def _gp_corrected_r(
         mu = float(np.clip(lin_delta + mu, -0.15, 0.15))
         return float(y_arx + mu), float(var), float(norm_var), float(ind_dist)
 
+def _apply_tap_from_reference(sim, reference: "np.ndarray") -> None:
+    """Set TCA/TCB/TCC in sim._row and initialise R lags to the expected
+    equilibrium for the chosen tap setting.
+
+    The tap changer shifts the transformer voltage which sets a new R
+    operating point.  Without also updating the initial R lags the ARX
+    starts from the hardcoded thesis OP (1.08/1.07/1.07) even when a
+    very different tap is requested, and the simulation never reaches the
+    correct starting equilibrium.
+
+    Called from both run_closed_loop_from_config and
+    run_locked_closed_loop_from_config.
+    """
+    _tap_lookup_path = _HERE / "models" / "tap_lookup.json"
+    if not _tap_lookup_path.exists():
+        return
+    try:
+        from fusion.training.tap_lookup import TapLookup
+        import numpy as _np
+        _tl   = TapLookup.load(_tap_lookup_path)
+        _tc   = {1: "TCA", 2: "TCB", 3: "TCC"}
+        _taps = {}
+        for _i in (1, 2, 3):
+            # Use the first reference value (t=0) not the mean so the
+            # initial condition matches the starting setpoint, not the average
+            _r_start  = float(reference[0, _i - 1])
+            _tap_val  = _tl.get_tap(_i, _r_start)
+            _r_eq     = _tl._tables[_i].get(_tap_val, _r_start)
+            _taps[_i] = _tap_val
+            _col = _tc[_i]
+            if _col in sim._row.index:
+                sim._row[_col] = _tap_val
+            # Seed R lag registers to the tap's expected equilibrium so the
+            # ARX starts from the correct operating point
+            for _lag in range(1, 11):
+                _rc = f"El{_i}_y_filt_lag{_lag}"
+                if _rc in sim._row.index:
+                    sim._row[_rc] = _r_eq
+        print(f"[fusion] Auto-tap (t=0 ref):  "
+              f"TCA={_taps[1]:.0f} (R={_tl._tables[1][_taps[1]]:.3f})  "
+              f"TCB={_taps[2]:.0f} (R={_tl._tables[2][_taps[2]]:.3f})  "
+              f"TCC={_taps[3]:.0f} (R={_tl._tables[3][_taps[3]]:.3f})")
+    except Exception as _e:
+        print(f"[fusion] Tap auto-set skipped: {_e}")
+
+
+def _seed_dpos_lags(sim, gp_variant: str) -> None:
+    """Placeholder for variant-specific dpos initialisation. Currently no-op."""
+    pass
 
 def run_closed_loop_from_config(
     ref_csv:           str | Path,
@@ -378,7 +481,6 @@ def run_closed_loop_from_config(
     Run a three-electrode closed-loop simulation with the joint ARX + GP plant.
 
     Parameters
-    ----------
     ref_csv           : CSV with reference signal(s).
                         Columns r1/r2/r3 for per-electrode refs, or a single
                         'reference' column broadcast to all three electrodes.
@@ -392,7 +494,6 @@ def run_closed_loop_from_config(
     **kwargs          : Other keyword arguments are ignored (compatibility).
 
     Returns
-    -------
     pd.DataFrame with columns:
         t_s, y1, y2, y3, r1, r2, r3, u1, u2, u3, e1, e2, e3, v_transformer
     """
@@ -405,6 +506,18 @@ def run_closed_loop_from_config(
     if controller_name == "relay":
         from .controllers.relay import RelayController, load_relay_params
         controllers = [RelayController(**p) for p in load_relay_params(controller_config)]
+    elif controller_name == "decoupled_pid":
+        # Standard PID but electrode position changes are pre-multiplied by the
+        # static decoupling matrix D = G^{-1} computed from the ARX gain at OP.
+        # Each PID sees an independent channel; cross-coupling cancellation is
+        # absorbed into the actual electrode commands.
+        controller_name = "pid"   # use standard PID internally
+        from run_simulation.closed_loop.controller_registry import make_controllers
+        controllers = make_controllers(
+            name="pid", config_path=controller_config, dt=dt
+        )
+        # Decoupler will be applied below; flag it
+        controller_name = "decoupled_pid"
     else:
         try:
             from run_simulation.closed_loop.controller_registry import make_controllers
@@ -424,7 +537,65 @@ def run_closed_loop_from_config(
 
     gp_variant = kwargs.pop("gp_variant", _GP_VARIANT)
     sim, gp_bundles, linear_models = _build_sim_and_gps(gp_variant)
-    reference = _load_reference(ref_csv)          # (n, 3)
+    reference  = _load_reference(ref_csv)
+
+    if kwargs.pop("auto_tap", True):
+        _apply_tap_from_reference(sim, reference)
+        _seed_dpos_lags(sim, gp_variant)
+
+    # Compute static decoupling matrix for decoupled_pid mode.
+    # G[i,j] = dR_i / d(dpos_j) at the operating point (one relay step perturbation).
+    # D = G^{-1} transforms independent PID outputs into coordinated electrode commands.
+    _decoupler: "np.ndarray | None" = None
+    if controller_name == "decoupled_pid":
+        _DELTA = 0.01
+        R_nom  = np.array([sim._predict_r(i) for i in (1, 2, 3)])
+        G      = np.zeros((3, 3))
+        for _j in (1, 2, 3):
+            _row_pert = sim._row.copy()
+            _row_pert[f"El{_j}_dpos_mps_filt_lag1"] = _DELTA
+            _sim_pert = type(sim)(sim._model.__class__.__new__(sim._model.__class__),
+                                  _row_pert, electrode=1) if False else None
+            # Simpler: temporarily set the lag in sim, predict, restore
+            _orig = float(sim._row.get(f"El{_j}_dpos_mps_filt_lag1", 0.0))
+            sim._row[f"El{_j}_dpos_mps_filt_lag1"] = _DELTA
+            sim._cached_preds = None
+            R_pert = np.array([sim._predict_r(i) for i in (1, 2, 3)])
+            G[:, _j - 1] = (R_pert - R_nom) / _DELTA
+            sim._row[f"El{_j}_dpos_mps_filt_lag1"] = _orig
+            sim._cached_preds = None
+        try:
+            _decoupler = np.linalg.inv(G)
+            print(f"[fusion] Decoupler D = G^-1 computed at OP.")
+            print(f"[fusion]   G diag (mOhm/m): {np.diag(G).round(3)}")
+        except np.linalg.LinAlgError:
+            print("[fusion] WARNING: gain matrix singular, using pseudoinverse.")
+            _decoupler = np.linalg.pinv(G)
+
+    # Load cross-R freeze means once for decoupled variants (not per step).
+    _r_cross_mean: dict[int, float] = {}
+    if gp_variant in _DECOUPLED_R_VARIANTS:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _arx_bun_dec = joblib.load(
+                _HERE / "models" / _ARX_FOR_VARIANT[gp_variant])
+        _r_cross_mean = _arx_bun_dec.get("r_cross_mean", {})
+        print(f"[fusion] V13 decoupled: cross-R means = {_r_cross_mean}")
+    # reference already loaded above for tap auto-set; n is needed below.
+
+    # For the "rollout" SVGP, capture the initial state per electrode.
+    # All lag slots that the simulator doesn't track (lags 4-10 for R and pos,
+    # lags 4-10 for kA) are filled with their initial values so the GP sees
+    # a properly warm-started state at t=0 rather than a zero-filled history.
+    r_initial: "dict | None" = None
+    if gp_variant in _NEEDS_RTILDE_APPROX:
+        r_initial = {
+            "R":   {i: float(sim._row.get(f"El{i}_y_filt_lag1",    0.0)) for i in (1,2,3)},
+            "pos": {i: float(sim._row.get(f"El{i}_pos_m_lag1",      1.04)) for i in (1,2,3)},
+            "kA":  {i: float(sim._row.get(f"El{i}_kA_filt_lag1", 118.0)) for i in (1,2,3)},
+        }
+        print(f"[fusion] rollout SVGP: R_initial={r_initial['R']}  "
+              f"pos={r_initial['pos']}  kA={r_initial['kA']}")
 
     if _unified:
         controllers.reset()
@@ -460,7 +631,8 @@ def run_closed_loop_from_config(
     state_list.append(dict(sim._row))
     for i in (1, 2, 3):
         y[0, i - 1], gp_var_arr[0, i - 1], norm_var_arr[0, i - 1], ind_dist_arr[0, i - 1] = _gp_corrected_r(
-            sim, gp_bundles, i, plant_cache, step=0, linear_models=linear_models
+            sim, gp_bundles, i, plant_cache, step=0, linear_models=linear_models,
+            gp_variant=gp_variant, r_initial=r_initial,
         )
         plant_cache[f"r{i}"]      = y[0, i - 1]
         plant_cache[f"r{i}_lag2"] = y[0, i - 1]
@@ -470,6 +642,16 @@ def run_closed_loop_from_config(
         plant_cache["step"] = k
         rolling_feats.inject(sim._row)
 
+        # Decoupled variants: freeze cross-electrode R lags at training-set means
+        # before ARX predictions so cross-electrode R coupling is removed.
+        if _r_cross_mean:
+            for _j in (1, 2, 3):
+                _mj = _r_cross_mean.get(_j, 0.0)
+                for _k in (1, 2, 3):
+                    _col = f"El{_j}_y_filt_lag{_k}"
+                    if _col in sim._row.index:
+                        sim._row[_col] = _mj
+
         # 1. Predict R one step ahead (ARX + GP) for all three electrodes
         y_pred:     dict = {}
         gp_var_k:   dict = {}
@@ -477,14 +659,17 @@ def run_closed_loop_from_config(
         ind_dist_k: dict = {}
         for i in (1, 2, 3):
             y_pred[i], gp_var_k[i], norm_var_k[i], ind_dist_k[i] = _gp_corrected_r(
-                sim, gp_bundles, i, plant_cache, step=k, linear_models=linear_models
+                sim, gp_bundles, i, plant_cache, step=k, linear_models=linear_models,
+                gp_variant=gp_variant, r_initial=r_initial,
             )
 
         sim._electrode = 1
 
-        # 2. OOD gate: hold position and freeze integrators when GP is uncertain
+        # 2. OOD gate: hold position and freeze integrators when GP is uncertain.
+        # Disabled for "rollout": the SVGP's norm_var is not calibrated to the
+        # same scale as the V9 GP so the threshold would gate continuously.
         mean_nv  = float(np.mean([norm_var_k[i] for i in (1, 2, 3)]))
-        ood_hold = mean_nv > _OOD_GATE_THRESHOLD
+        ood_hold = (mean_nv > _OOD_GATE_THRESHOLD) and (gp_variant not in _NEEDS_RTILDE_APPROX)
 
         # 3. Each controller computes its desired electrode position
         u_new: dict = {}
@@ -499,10 +684,25 @@ def run_closed_loop_from_config(
                 y_pred=y_pred,
                 u_prev=u_prev,
             )
-            for i in (1, 2, 3):
-                u_ki         = apply_actuator_limits(u_des[i - 1], u_prev[i - 1])
-                u_new[i]     = u_ki
-                u[k, i - 1] = u_ki
+            if _decoupler is not None:
+                # Decoupled PID: transform raw PID du through D = G^{-1} so each
+                # controller acts on an independent channel with cross-coupling cancelled.
+                _raw_du = np.array([
+                    float(u_des[i-1][0] if hasattr(u_des[i-1], '__len__') else u_des[i-1])
+                    - float(u_prev[i-1])
+                    for i in (1, 2, 3)
+                ])
+                _dec_du = _decoupler @ _raw_du
+                for i in (1, 2, 3):
+                    _u_dec = float(u_prev[i-1]) + float(_dec_du[i-1])
+                    u_ki   = apply_actuator_limits(_u_dec, u_prev[i - 1])
+                    u_new[i]     = u_ki
+                    u[k, i - 1] = u_ki
+            else:
+                for i in (1, 2, 3):
+                    u_ki         = apply_actuator_limits(u_des[i - 1], u_prev[i - 1])
+                    u_new[i]     = u_ki
+                    u[k, i - 1] = u_ki
             e[k] = e_k
         else:
             for i in (1, 2, 3):
