@@ -17,7 +17,7 @@ Usage
         controller_name   = "relay",        # or "pid"
         controller_config = "params.csv",
         out_csv           = "results.csv",
-        gp_variant        = "v9",
+        gp_variant        = "v18",
     )
 """
 from __future__ import annotations
@@ -65,7 +65,7 @@ def run_locked_closed_loop_from_config(
     gp_variant:           str   = _GP_VARIANT,
     tap_schedule:         "dict | None" = None,
     warmup_hold_steps:    int   = 0,
-    gp_scale:             float = 0.1,
+    gp_scale:             float = 1.0,
     init_row:             "dict | None" = None,
     **kwargs,
 ) -> pd.DataFrame:
@@ -140,7 +140,7 @@ def run_locked_closed_loop_from_config(
     # GP baseline: subtract the correction at initial conditions so the GP
     # contributes zero at the cold-start operating point.
     _gp_biases = {1: 0.0, 2: 0.0, 3: 0.0}
-    if gp_scale > 0.0 and gp_variant in ("v14", "v15", "v15b"):
+    if gp_scale > 0.0 and gp_variant in ("v14", "v15", "v15b", "v15s", "v16", "v16a"):
         for i in (1, 2, 3):
             r_gp, _, _, _ = _gp_corrected_r(
                 sim, gp_bundles, i, plant_cache, step=9999,

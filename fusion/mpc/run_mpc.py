@@ -10,7 +10,7 @@ Usage in VRFT v5.py - change one import line:
 
 The function signature is compatible with run_closed_loop_from_config.
 
-Plant:      SaFSimulator with joint V9 or V15 ARX + optional GP correction
+Plant:      SaFSimulator with joint V17 ARX + V18 SVGP correction
 Controller: do-mpc NMPC with IPOPT solver, horizon H=5
 Objective:  minimise (R - r_nom)^2 per electrode
 Constraint: soft R band [r_nom - r_tol, r_nom + r_tol]
@@ -94,7 +94,7 @@ def run_closed_loop_from_config(
     lam_int:            float = 0.0,
     objective:          str   = "r",
     constraint_penalty: float = 1e4,
-    gp_variant:         str   = "v9",
+    gp_variant:         str   = "v18",
     gp_scale:           float = 1.0,
     auto_tap:           bool  = True,
     locked:             bool  = True,
@@ -260,7 +260,7 @@ if __name__ == "__main__":
     ap.add_argument("--H",           type=int,   default=5)
     ap.add_argument("--lam-u",       type=float, default=1.0)
     ap.add_argument("--lam-int",     type=float, default=0.0)
-    ap.add_argument("--gp-variant",  default="v9")
+    ap.add_argument("--gp-variant",  default="v18")
     ap.add_argument("--gp-scale",    type=float, default=1.0)
     ap.add_argument("--penalty",     type=float, default=1e4)
     ap.add_argument("--no-auto-tap", action="store_true")

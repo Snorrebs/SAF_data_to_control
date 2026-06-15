@@ -65,7 +65,7 @@ from .training.gp_loader import load_gp_bundle, predict_single, predict_single_c
 
 # MODEL SELECTION: change _GP_VARIANT to switch between plant models.
 # Each variant is a matched ARX + GP pair trained on the same dataset.
-_GP_VARIANT = "v9"
+_GP_VARIANT = "v18"
 
 # ARX model paired with each GP variant (do not change unless you retrain):
 _ARX_FOR_VARIANT = {
@@ -84,6 +84,10 @@ _ARX_FOR_VARIANT = {
     "v14":               "arx_joint_v14.joblib",          # V14 per-electrode Ridge, delta-R target
     "v15":               "arx_joint_v15.joblib",          # V15 delta-R, 5 lags, all infra fixes
     "v15b":              "arx_joint_v15.joblib",          # V15b = V15 ARX + one-step-anchored GP
+    "v15s":              "arx_joint_v15_stable.joblib",   # V15s = V15 with R-lag coefs zeroed (stable open-loop)
+    "v16":               "arx_joint_v16.joblib",          # V16 delta-R, no R-lag features (architecturally stable)
+    "v16a":              "arx_joint_v16.joblib",          # V16a backup, 10-epoch GP (before 60-epoch retrain)
+    "v18":               "arx_joint_v17.joblib",          # V18 rollout SVGP, V17 joint ARX (rank=10), 42 features
 }
 
 # V7 uses a lightweight linear residual model before the GP.
@@ -113,10 +117,12 @@ _TYPICAL_R_BY_EL   = {1: 1.20,  2: 0.77,  3: 1.14}
 # its training distribution and immediately diverging.
 _TYPICAL_KA_FOR    = {"v6": 118.0, "v7": 118.0, "v8": 118.0, "v9": 118.0,
                       "rollout": 118.0, "v11": 118.0, "v12": 118.0, "v13": 118.0,
-                      "v14": 118.0, "v15": 118.0, "v15b": 118.0}
+                      "v14": 118.0, "v15": 118.0, "v15b": 118.0, "v15s": 118.0,
+                      "v16": 118.0, "v16a": 118.0, "v18": 118.0}
 _TYPICAL_REAC_FOR  = {"v6": 0.88,  "v7": 0.88,  "v8": 0.88,  "v9": 0.88,
                       "rollout": 0.88, "v11": 0.88, "v12": 0.88, "v13": 0.88,
-                      "v14": 0.88, "v15": 0.88, "v15b": 0.88}
+                      "v14": 0.88, "v15": 0.88, "v15b": 0.88, "v15s": 0.88,
+                      "v16": 0.88, "v16a": 0.88, "v18": 0.88}
 _TYPICAL_R_BY_EL_FOR = {
     "v6":      {1: 1.08, 2: 1.07, 3: 1.07},
     "v7":      {1: 1.08, 2: 1.07, 3: 1.07},
@@ -128,6 +134,10 @@ _TYPICAL_R_BY_EL_FOR = {
     "v13":     {1: 1.08, 2: 1.07, 3: 1.07},
     "v14":     {1: 1.08, 2: 1.07, 3: 1.07},
     "v15":     {1: 1.08, 2: 1.07, 3: 1.07},
+    "v15s":    {1: 1.08, 2: 1.07, 3: 1.07},
+    "v16":     {1: 1.08, 2: 1.07, 3: 1.07},
+    "v16a":    {1: 1.08, 2: 1.07, 3: 1.07},
+    "v18":     {1: 1.08, 2: 1.07, 3: 1.07},
 }
 
 # The "rollout" SVGP was trained in R_tilde space (R - initial_R).
@@ -311,6 +321,13 @@ class _RollingFeatures:
         d = list(self._dpos1)
         row["El1_dpos_mps_filt_lag4"] = d[-4] if len(d) >= 4 else 0.0
         row["El1_dpos_mps_filt_lag5"] = d[-5] if len(d) >= 5 else 0.0
+
+        # CosPhi = R / |Z| = R / sqrt(R^2 + X^2) per electrode
+        for _j in (1, 2, 3):
+            _r  = float(row.get(f"El{_j}_y_filt_lag1", 0.0))
+            _x  = float(row.get(f"El{_j}_CalcReac_filt_lag1", 0.0))
+            _z2 = _r * _r + _x * _x
+            row[f"El{_j}_CosPhi"] = float(_r / _z2 ** 0.5) if _z2 > 1e-6 else 0.0
 
 def _gp_corrected_r(
     sim:             SaFSimulator,

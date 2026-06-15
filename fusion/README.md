@@ -18,13 +18,16 @@ All model files live in `fusion/models/`.
 | `v6` | `arx_joint_v6.joblib` | Joint ARX, debiased GP |
 | `v7` | `arx_joint_v6.joblib` | Two-stage: linear correction then GP |
 | `v8` | `arx_joint_v8.joblib` | Full-dataset retrain (10/80/10 split) |
-| `v9` | `arx_joint_v9.joblib` | Step-episode filtered ARX. Relay baseline |
+| `v9` | `arx_joint_v9.joblib` | Step-episode filtered ARX |
 | `rollout` | `arx_joint_v9.joblib` | SVGP trained on H=1000 rollout windows |
 | `v11` | `arx_joint_pi_v3.joblib` | One-step training, no step_in_window feature |
 | `v12` | `arx_joint_v12.joblib` | SEM-weighted rollout, retrained ARX |
 | `v13` | `arx_joint_v13.joblib` | V12 without own-R lags |
 | `v14` | `arx_joint_v14.joblib` | Per-electrode Ridge, delta-R target |
-| `v15` | `arx_joint_v15.joblib` | Delta-R, 5 lags. PID baseline |
+| `v15` | `arx_joint_v15.joblib` | Delta-R, 5 lags |
+| `v15s` | `arx_joint_v15_stable.joblib` | V15 with R-lag coefficients zeroed |
+| `v16` | `arx_joint_v16.joblib` | No-R-lag ARX, architecturally stable |
+| `v18` | `arx_joint_v17.joblib` | **Default.** V17 joint ARX (rank=10) + V18 rollout SVGP, 42 features |
 
 GP files follow the pattern `gp_el{1,2,3}_{variant}.pt`.
 
@@ -45,7 +48,6 @@ run_closed_loop_from_config(
     controller_name   = "pid",
     controller_config = "PID_params.csv",
     out_csv           = "result.csv",
-    gp_variant        = "v9",
 )
 ```
 
@@ -62,18 +64,26 @@ run_locked_closed_loop_from_config(
     controller_config = "PID_params.csv",
     out_csv           = "result.csv",
     controller_name   = "pid",
-    gp_variant        = "v15",
-    gp_scale          = 0.0,
     warmup_hold_steps = 150,
     deadband          = 0.0,
 )
 ```
 
-`gp_scale=0.0` disables the GP correction (ARX-only). This gives better
-closed-loop performance for V15 because the GP was trained on relay-controlled
-data and introduces bias under PID regulation.
+**Supported controllers:** `pid`, `relay`
 
-**Supported controllers:** `pid`, `relay`, `open_loop`
+### NMPC
+
+```python
+from fusion.mpc.run_mpc import run_closed_loop_from_config
+
+run_closed_loop_from_config(
+    ref_csv           = "reference.csv",
+    controller_name   = "nmpc",
+    controller_config = "reference.csv",
+    out_csv           = "result.csv",
+    H                 = 5,
+)
+```
 
 ---
 
@@ -108,8 +118,6 @@ Outputs to `fusion/results/model_comparison/`.
 
 ```
 python fusion/example_pid_simulation.py
-python fusion/example_relay_rollout.py
-python fusion/example_rule_controller.py
 ```
 
 ---
@@ -119,8 +127,9 @@ python fusion/example_rule_controller.py
 | Script | What it trains |
 |---|---|
 | `train_gp_v15.py` | V15 delta-R ARX + SVGP (rollout dataset) |
+| `archive/train_gp_v16.py` | V16 no-R-lag ARX + rollout SVGP (basis for V18 GP) |
 | `train_gp.py` | Legacy GP trainer |
-| `archive/train_gp_v14.py` | V14 per-electrode Ridge delta-R ARX (predecessor to V15) |
+| `archive/train_gp_v14.py` | V14 per-electrode Ridge delta-R ARX |
 | `archive/train_gp_rollout.py` | Rollout SVGP variant |
 
 Training data path is set at the top of each script.
@@ -161,12 +170,10 @@ from fusion.run_closed_loop import run_closed_loop_from_config
 fusion/
   run_closed_loop.py            closed-loop simulation entry point
   run_locked_closed_loop.py     single-mover locked PID/relay simulation
-  tune_pid_v13.py               PID tuning and relay comparison for V15
+  tune_pid_v13.py               PID tuning and relay comparison
   compare_models_openloop.py    open-loop model accuracy benchmark
   example_pid_simulation.py     PID example
-  example_relay_rollout.py      relay example
-  example_rule_controller.py    rule-based controller example
-  train_gp_v15.py               V15 ARX + SVGP training (rollout)
+  train_gp_v15.py               V15 ARX + SVGP training
   models/                       trained model files (see table above)
   controllers/
     relay.py                    step-and-wait relay controller
@@ -179,7 +186,8 @@ fusion/
     tap_lookup.py               R setpoint to transformer tap mapping
   archive/
     run_closed_loop_rollout.py  legacy rollout entry point
-    train_gp_v14.py             V14 training (predecessor to V15)
+    train_gp_v14.py             V14 training
+    train_gp_v16.py             V16/V18 training
     train_gp_rollout.py         rollout SVGP training
   data/
     README.md                   required data column format

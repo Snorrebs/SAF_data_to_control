@@ -219,8 +219,7 @@ class SaFSimulator(SimulatorInterface):
         self._pos = {i: float(self._row.get(f"El{i}_pos_m_lag1", _DEFAULT_POS))
                      for i in (1, 2, 3)}
 
-   
-                     # SimulatorInterface identity properties
+    # SimulatorInterface identity properties
     @property
     def output_col(self) -> str:
         return f"El{self._electrode}_Resistance_mOhm_filt"
